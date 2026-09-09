@@ -70,15 +70,13 @@ from config import (
     SEND_LIFE_CONFIRM_TIMEOUT,
     SEND_LIFE_CONFIRM_DIALOG_REGION,
     SEND_LIFE_CONFIRM_DIALOG_TEMPLATE,
-    SEND_LIFE_MAX_TRANSITION_FAILURES,
-    SEND_LIFE_NO_BUTTON_MAX_SCROLLS,
+    SEND_LIFE_MAX_DURATION,
     SEND_LIFE_SENT_DIALOG_REGION,
     SEND_LIFE_SENT_DIALOG_TEMPLATE,
     SEND_LIFE_SENT_TIMEOUT,
     SEND_LIFE_STABLE_CHECK_INTERVAL,
     SEND_LIFE_STABLE_DIFF_THRESHOLD,
     SEND_LIFE_STABLE_MAX_CHECKS,
-    SEND_LIFE_TOP_MAX_SCROLLS,
     START_BUTTON,
     CONNECTION_LOST_RELOAD_BUTTON,
     FAILED_TO_RETRIEVE_DATA_CONFIRM_BUTTON,
@@ -432,31 +430,27 @@ def _send_one_friend_life(match):
 
 def handle_send_friend_life():
     print("💌 Handling Send Friend Life...")
-    # Scroll leaderboard to top; stop if the expected screen never appears.
-    for top_scroll_count in range(1, SEND_LIFE_TOP_MAX_SCROLLS + 1):
+    deadline = time.monotonic() + SEND_LIFE_MAX_DURATION
+
+    # Scroll leaderboard to top; give up if the expected screen never appears in time.
+    while time.monotonic() < deadline:
         screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
         if recover_friend_overlay(screen):
             continue
         if detect_templates(screen, FRIEND_TOP_LEADERBOARD_TEMPLATE, FRIEND_TOP_LEADERBOARD_REGION):
             print("✅ Top of Friend Leaderboard reached.")
             break
-        print(f"🔄 Scrolling up to find Send Friend Life... ({top_scroll_count}/{SEND_LIFE_TOP_MAX_SCROLLS})")
+        print("🔄 Scrolling up to find Send Friend Life...")
         safe_device_scroll(DEVICE_IP, DEVICE_PORT, LEADERBOARD_BOTTOM_POSITION[0], LEADERBOARD_BOTTOM_POSITION[1], direction="down", distance=300, duration=150)
         time.sleep(random.uniform(0.8, 1.4))
     else:
-        print("⚠️ Friend leaderboard top was not found. Aborting send-life flow.")
+        print(f"⚠️ Friend leaderboard top not found within {SEND_LIFE_MAX_DURATION:.0f}s. Giving up.")
         return False
 
-    # Scroll down, tap all send life buttons, stop when bottom leaderboard detected
-    no_button_scroll_count = 0
-    transition_failure_count = 0
-    while True:
+    # Scroll down, tap all send life buttons, stop when bottom leaderboard detected.
+    while time.monotonic() < deadline:
         screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
         if recover_friend_overlay(screen):
-            transition_failure_count += 1
-            if transition_failure_count >= SEND_LIFE_MAX_TRANSITION_FAILURES:
-                print("⚠️ Too many unexpected friend overlays. Aborting send-life flow.")
-                return False
             continue
         if detect_templates(screen, FRIEND_BOTTOM_LEADERBOARD_TEMPLATE, FRIEND_BOTTOM_LEADERBOARD_REGION):
             print("✅ Bottom of Friend Leaderboard reached. Done sending lives.")
@@ -470,28 +464,14 @@ def handle_send_friend_life():
             if not send_life_button_coords:
                 print("🔄 Button moved after settling; re-checking...")
                 continue
-            no_button_scroll_count = 0
-            if _send_one_friend_life(send_life_button_coords[0]):
-                transition_failure_count = 0
-            else:
-                transition_failure_count += 1
-                if transition_failure_count >= SEND_LIFE_MAX_TRANSITION_FAILURES:
-                    print("⚠️ Too many failed send-life transitions. Aborting send-life flow.")
-                    return False
+            _send_one_friend_life(send_life_button_coords[0])
         else:
-            no_button_scroll_count += 1
-            if no_button_scroll_count >= SEND_LIFE_NO_BUTTON_MAX_SCROLLS:
-                print(
-                    f"⚠️ No send life buttons found for {SEND_LIFE_NO_BUTTON_MAX_SCROLLS} "
-                    "consecutive scrolls. Aborting send-life flow."
-                )
-                return False
-            print(
-                "🔄 No send life buttons found, scrolling down... "
-                f"({no_button_scroll_count}/{SEND_LIFE_NO_BUTTON_MAX_SCROLLS})"
-            )
+            print("🔄 No send life buttons found, scrolling down...")
             safe_device_scroll(DEVICE_IP, DEVICE_PORT, LEADERBOARD_TOP_POSITION[0], LEADERBOARD_TOP_POSITION[1], direction="up", distance=70, duration=150)
             time.sleep(random.uniform(0.8, 1.4))
+
+    print(f"⚠️ Send-life flow did not finish within {SEND_LIFE_MAX_DURATION:.0f}s. Giving up.")
+    return False
 
 
 def handle_quick_receive_and_send_lives():

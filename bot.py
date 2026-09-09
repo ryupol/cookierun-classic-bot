@@ -234,15 +234,7 @@ def main():
                 if pending_send_friend_life:
                     print("💌 Sending friend lives after app reset...")
                     if not handle_send_friend_life():
-                        print("🔄 Send-life flow got stuck — forcing full app restart...")
-                        device_reset_app(DEVICE_IP, DEVICE_PORT)
-                        time.sleep(5)
-                        close_announcement_dialog()
-                        session_start_time = time.time()
-                        session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
-                        lives_interval = random.uniform(*LIVES_INTERVAL)
-                        detection_group = "PRE_GAME"
-                        is_first_game = True
+                        print("⚠️ Send-life flow gave up — leaving it to the idle-stage restart if the screen is stuck.")
                     pending_send_friend_life = False
                     last_lives_time = time.time()
                     last_stage = None
