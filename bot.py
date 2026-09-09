@@ -33,6 +33,7 @@ from actions import (
     start_game,
     using_cookie_relay,
     using_fast_start,
+    recover_friend_overlay,
 )
 from config import (
     BOOST_17P_BASE_SPEED_TEMPLATE,
@@ -54,6 +55,8 @@ from config import (
     SESSION_RESET_INTERVAL,
     LIVES_INTERVAL,
     MAX_FAILED_TO_RETRIEVE_DATA_RETRIES,
+    MAX_UNKNOWN_STAGE_RESTARTS,
+    UNKNOWN_STAGE_RESET_TIMEOUT,
 )
 from detection import detect_stage, load_templates
 from debug import save_debug_screen
@@ -95,6 +98,13 @@ def get_detection_stage_names(group_name, exclude=None):
     if exclude:
         stage_names = [s for s in stage_names if s not in exclude]
     return stage_names
+
+
+def unknown_stage_timed_out(started_at, detection_group, now=None):
+    if started_at is None:
+        return False
+    current_time = time.monotonic() if now is None else now
+    return current_time - started_at >= UNKNOWN_STAGE_RESET_TIMEOUT[detection_group]
 
 
 def prompt_user_options():
@@ -157,6 +167,8 @@ def main():
         last_lives_time = time.time()
         lives_interval = random.uniform(*LIVES_INTERVAL)
         pending_send_friend_life = False
+        unknown_stage_since = None
+        unknown_restart_count = 0
         data_retry_count = 0
 
         while True:
@@ -169,8 +181,44 @@ def main():
             else:
                 last_detected_time = time.time()
 
-            if stage is not None and stage != "FAILED_TO_RETRIEVE_DATA":
-                data_retry_count = 0
+            if stage is None and recover_friend_overlay(device_screen):
+                unknown_stage_since = None
+                last_stage = None
+                continue
+
+            if stage is None:
+                if unknown_stage_since is None:
+                    unknown_stage_since = time.monotonic()
+                elif unknown_stage_timed_out(unknown_stage_since, detection_group):
+                    timeout = UNKNOWN_STAGE_RESET_TIMEOUT[detection_group]
+                    unknown_restart_count += 1
+                    print(f"⚠️ Stage unknown for {timeout:.0f}s. Saving diagnostics and restarting app... (attempt {unknown_restart_count}/{MAX_UNKNOWN_STAGE_RESTARTS})")
+                    save_debug_screen(device_screen)
+                    if unknown_restart_count >= MAX_UNKNOWN_STAGE_RESTARTS:
+                        print(f"❌ Stage still unknown after {MAX_UNKNOWN_STAGE_RESTARTS} consecutive restarts. Stopping bot for manual check.")
+                        send_telegram_alert(
+                            f"❌ CookieRun bot stopped: stage unknown after {MAX_UNKNOWN_STAGE_RESTARTS} consecutive restarts. Manual check needed."
+                        )
+                        break
+                    device_reset_app(DEVICE_IP, DEVICE_PORT)
+                    time.sleep(5)
+                    close_announcement_dialog()
+                    session_start_time = time.time()
+                    session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
+                    last_lives_time = time.time()
+                    lives_interval = random.uniform(*LIVES_INTERVAL)
+                    pending_send_friend_life = False
+                    detection_group = "PRE_GAME"
+                    last_detected_time = time.time()
+                    last_stage = None
+                    unknown_stage_since = None
+                    is_first_game = True
+                    continue
+            else:
+                unknown_stage_since = None
+                unknown_restart_count = 0
+                if stage != "FAILED_TO_RETRIEVE_DATA":
+                    data_retry_count = 0
 
             if stage == last_stage:
                 time.sleep(0.1)
