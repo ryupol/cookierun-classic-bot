@@ -1,6 +1,8 @@
 import random
 import time
 
+import numpy as np
+
 from adb import safe_device_tap, safe_device_scroll, device_capture_screen
 from config import (
     ACCEPT_ALL_LIVES_RECEIVED_AND_SENT_BUTTON,
@@ -73,6 +75,9 @@ from config import (
     SEND_LIFE_SENT_DIALOG_REGION,
     SEND_LIFE_SENT_DIALOG_TEMPLATE,
     SEND_LIFE_SENT_TIMEOUT,
+    SEND_LIFE_STABLE_CHECK_INTERVAL,
+    SEND_LIFE_STABLE_DIFF_THRESHOLD,
+    SEND_LIFE_STABLE_MAX_CHECKS,
     SEND_LIFE_TOP_MAX_SCROLLS,
     START_BUTTON,
     CONNECTION_LOST_RELOAD_BUTTON,
@@ -361,6 +366,24 @@ def _wait_for_template_to_clear(template_files, region, timeout):
     return None
 
 
+def _wait_for_stable_screen(region, screen=None):
+    """Poll screenshots until the given region stops changing (fling/momentum scroll settled)."""
+    previous = screen if screen is not None else device_capture_screen(DEVICE_IP, DEVICE_PORT)
+    x1, y1, x2, y2 = region
+    for _ in range(SEND_LIFE_STABLE_MAX_CHECKS):
+        time.sleep(SEND_LIFE_STABLE_CHECK_INTERVAL)
+        current = device_capture_screen(DEVICE_IP, DEVICE_PORT)
+        prev_crop = previous[y1:y2, x1:x2]
+        curr_crop = current[y1:y2, x1:x2]
+        if prev_crop.shape == curr_crop.shape and np.mean(
+            np.abs(prev_crop.astype(np.int16) - curr_crop.astype(np.int16))
+        ) < SEND_LIFE_STABLE_DIFF_THRESHOLD:
+            return current
+        previous = current
+    print("⚠️ Leaderboard still moving after settle checks; using last captured frame.")
+    return previous
+
+
 def _send_one_friend_life(match):
     x, y, w, h = match
     print("💌 Sending life to friend...")
@@ -440,6 +463,13 @@ def handle_send_friend_life():
             return True
         send_life_button_coords = detect_templates(screen, FRIEND_SEND_LIFE_TEMPLATE, FRIEND_SEND_LIFE_REGION)
         if send_life_button_coords:
+            # List may still be settling from fling/momentum after the last scroll;
+            # re-detect on a stable frame before trusting the tap coordinates.
+            stable_screen = _wait_for_stable_screen(FRIEND_SEND_LIFE_REGION, screen)
+            send_life_button_coords = detect_templates(stable_screen, FRIEND_SEND_LIFE_TEMPLATE, FRIEND_SEND_LIFE_REGION)
+            if not send_life_button_coords:
+                print("🔄 Button moved after settling; re-checking...")
+                continue
             no_button_scroll_count = 0
             if _send_one_friend_life(send_life_button_coords[0]):
                 transition_failure_count = 0
