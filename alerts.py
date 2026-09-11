@@ -1,4 +1,6 @@
 import json
+import socket
+import urllib.error
 import urllib.request
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -19,5 +21,7 @@ def send_telegram_alert(message: str):
     try:
         urllib.request.urlopen(request, timeout=10)
         print("🔔 Telegram alert sent.")
+    except (socket.gaierror, urllib.error.URLError) as e:
+        print(f"🔔 Couldn't send Telegram alert — looks like your internet connection dropped: {e}")
     except Exception as e:
         print(f"🔔 Failed to send Telegram alert: {e}")
