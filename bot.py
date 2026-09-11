@@ -229,11 +229,12 @@ def main():
             if stage == "MAINMENU":
                 print("🎮 Detected Stage: MAINMENU")
                 # Wait screen refresh
-                print("⏳ Waiting 5 seconds for screen refresh...")
-                time.sleep(5)
+                print("⏳ Waiting 3 seconds for screen refresh...")
+                time.sleep(3)
                 if pending_send_friend_life:
                     print("💌 Sending friend lives after app reset...")
-                    handle_send_friend_life()
+                    if not handle_send_friend_life():
+                        print("⚠️ Send-life flow gave up — leaving it to the idle-stage restart if the screen is stuck.")
                     pending_send_friend_life = False
                     last_lives_time = time.time()
                     last_stage = None
