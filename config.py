@@ -35,6 +35,13 @@ MAX_FAILED_TO_RETRIEVE_DATA_RETRIES = 3  # after this many Confirm taps, force a
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+# Comma-separated Telegram numeric user IDs allowed to control the bot via
+# controller.py (e.g. "111111111,222222222"). Message @userinfobot on
+# Telegram to find your own user id. Leave empty to disable remote control.
+TELEGRAM_ALLOWED_USER_IDS = {
+    int(uid) for uid in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if uid.strip()
+}
+
 # -------------------
 # STAGE DETECTION TEMPLATES
 # -------------------

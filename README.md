@@ -14,6 +14,8 @@ An automated bot for CookieRun Classic that uses ADB (Android Debug Bridge) and 
 - Periodic session reset: automatically restarts the app every 1.5–3 hours to avoid long-session detection
 - Anti-bot card challenge detection: identifies and taps the odd card out automatically
 - Debug screen saving for troubleshooting
+- Telegram alerts on crashes and unrecoverable stuck states
+- Optional Telegram remote control (`controller.py`) — start/stop the bot, check status, tail logs, and pull a live screenshot from your phone
 
 ## Quickstart (macOS + BlueStacks)
 
@@ -55,6 +57,51 @@ Tested and confirmed working end-to-end on macOS with BlueStacks Air (Apple Sili
    ```
 
 Leave BlueStacks running with CookieRun Classic open before starting the bot. Stop the bot anytime with `Ctrl+C`.
+
+## Remote Control via Telegram (optional)
+
+`controller.py` lets you run the bot's terminal remotely from Telegram — useful if the bot runs on a MacBook you're not sitting in front of (e.g. controlling it from your phone).
+
+It does **not** replace `python3 main.py`; instead it spawns/stops that same process for you and answers its prompts over stdin, so `bot.py` itself is unchanged.
+
+### Setup
+
+1. **Create a Telegram bot** via [@BotFather](https://t.me/BotFather) and copy the token it gives you.
+2. **Find your numeric Telegram user id** — message [@userinfobot](https://t.me/userinfobot) and it'll reply with your id.
+3. **Add both to `.env`** (copy `.env.example` if you haven't already):
+   ```
+   TELEGRAM_BOT_TOKEN=123456:abc-your-bot-token
+   TELEGRAM_ALLOWED_USER_IDS=111111111
+   ```
+   `TELEGRAM_ALLOWED_USER_IDS` is comma-separated if you want more than one person to be able to control it. **Leave it empty and the controller refuses to start** — this prevents a leaked token from letting a stranger spawn processes on your Mac.
+4. **Message your bot once** on Telegram (anything, e.g. `/help`) so it can find your chat.
+5. **Run the controller** (instead of `main.py` directly), ideally inside `tmux` or `screen` so it survives you closing the terminal:
+   ```bash
+   source .venv/bin/activate
+   python3 controller.py
+   ```
+
+### Commands
+
+| Command | Effect |
+| --- | --- |
+| `/start [fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n]` | Starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. Bare `/start` reruns with the same flags as last time. |
+| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot finishes its current step and exits cleanly. |
+| `/kill` | Sends `SIGKILL`. Use only if `/stop` doesn't take effect. |
+| `/status` | Running/stopped, uptime, and the last line of `logs/bot.log`. |
+| `/logs [n]` | Last `n` lines of `logs/bot.log` (default 30, max 100). |
+| `/screenshot` | Captures the current BlueStacks screen via ADB and sends it as a photo. Works even if the bot is stopped or stuck, since it captures independently of the bot process. |
+| `/help` | Lists all commands. |
+
+Example:
+```
+/start fs=y cr=y rb=1 relic=n
+```
+This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`, `n` to its prompts (Fast Start, Cookie Relay, Desired Random Boost, boost #1 = Double Coins, Detect Relic). `rb` is the number from the `Select desired boost` list `bot.py` prints (1–11); use `rb=n` to skip that power-up entirely.
+
+The controller replies with the exact answer sequence it sent, and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
+
+> **⚠️ Coupling note:** the `/start` flags map to the *order* of the questions in `prompt_user_options()` (`bot.py`). If those prompts are ever reordered or a new one is added, `controller.py`'s flag mapping needs to be updated to match, or answers will land on the wrong question. Always sanity-check a fresh `/start` against `/logs` after changing `bot.py`'s prompts.
 
 ## Requirements
 
@@ -125,12 +172,17 @@ cookierun-classic-bot/
 ├── bot.py               # Main bot logic and game loop
 ├── actions.py           # Tap/action handlers for each stage
 ├── adb.py               # ADB connection and screen capture
+├── alerts.py            # Telegram alert notifications
 ├── config.py            # Device config, thresholds, and template paths
+├── controller.py        # Optional Telegram remote control (start/stop/status/logs/screenshot)
 ├── detection.py         # OpenCV template matching logic
 ├── debug.py             # Debug screen saving utility
+├── env.py               # .env file loader
 ├── requirements.txt     # Python dependencies
 ├── templates/           # Stage detection template images
-└── debug_screens/       # Saved debug screenshots (auto-created)
+├── tests/               # Unit tests
+├── debug_screens/       # Saved debug screenshots (auto-created)
+└── logs/                # Bot log + controller state (auto-created, gitignored)
 ```
 
 ## Configuration
@@ -144,6 +196,11 @@ All constants are defined in `config.py`.
 | `MATCH_THRESHOLD`        | `0.8`           | Minimum confidence for template match (0.0–1.0)         |
 | `TEMPLATE_DIR`           | `templates`     | Folder containing stage detection images                |
 | `SESSION_RESET_INTERVAL` | `(5400, 10800)` | Random interval in seconds (1.5–3 h) before app restart |
+| `LIVES_INTERVAL`         | `(1500, 2100)`  | Random interval in seconds (25–35 min) before sending/receiving friend lives |
+| `MAX_UNKNOWN_STAGE_RESTARTS` | `3`         | Consecutive stage-unknown app restarts before the bot gives up and stops |
+| `TELEGRAM_BOT_TOKEN`     | (empty)         | Bot token from [@BotFather](https://t.me/BotFather), used for both alerts and remote control |
+| `TELEGRAM_CHAT_ID`       | (empty)         | Chat id that crash/stuck alerts (`alerts.py`) are sent to |
+| `TELEGRAM_ALLOWED_USER_IDS` | (empty)      | Comma-separated Telegram user ids allowed to use `controller.py` — see [Remote Control via Telegram](#remote-control-via-telegram-optional) |
 
 You can also limit specific stage detection to a fixed screen region with `(x1, y1, x2, y2)` bounds. Each stage has a corresponding `STAGE_<NAME>_REGION` constant in `config.py` that restricts template matching to a sub-region of the screen, which speeds up detection.
 
@@ -178,3 +235,5 @@ Saved screenshots will appear in the `debug_screens/` folder with a timestamp.
 - **Stage not detected**: Save a debug screenshot and compare it against the template images. You may need to recapture templates at the correct resolution.
 - **ADB connection failed**: Verify ADB is in your PATH and the device is reachable (`adb devices`).
 - **Wrong tap coordinates**: All coordinates are calibrated for **1280×720**. Ensure your emulator/device is set to this resolution.
+- **`/start` answers land on the wrong prompt**: `controller.py`'s flags assume the exact question order in `prompt_user_options()` (`bot.py`). Check `/logs` for the `✅ Selected: <boost>` confirmation after starting; if it's missing or wrong, the prompts may have changed since the mapping was written.
+- **Controller refuses to start**: `TELEGRAM_ALLOWED_USER_IDS` must be non-empty in `.env`. This is intentional — it prevents a leaked bot token from giving a stranger control of your Mac.
