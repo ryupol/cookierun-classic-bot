@@ -79,8 +79,11 @@ def _api_url(method):
     return f"{API_BASE}/{method}"
 
 
-def send_message(chat_id, text, timeout=10):
-    payload = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+def send_message(chat_id, text, timeout=10, parse_mode=None):
+    body = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        body["parse_mode"] = parse_mode
+    payload = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
         _api_url("sendMessage"),
         data=payload,
@@ -93,6 +96,17 @@ def send_message(chat_id, text, timeout=10):
         print(f"⚠️ Couldn't send Telegram message — connection issue: {e}")
     except Exception as e:
         print(f"⚠️ Failed to send Telegram message: {e}")
+
+
+def send_code_message(chat_id, header, code_text, timeout=10):
+    """Send `header` as plain text followed by `code_text` in a monospace
+    block, so log-style lines (timestamps + emoji + text) stay aligned the
+    way they do in a terminal instead of reflowing in Telegram's
+    proportional font. Falls back to a plain message if Markdown parsing
+    fails (e.g. code_text contains an odd number of backticks)."""
+    escaped = code_text.replace("`", "'")
+    text = f"{header}\n```\n{escaped}\n```" if header else f"```\n{escaped}\n```"
+    send_message(chat_id, text, timeout=timeout, parse_mode="Markdown")
 
 
 def send_photo(chat_id, image_bytes, filename="screenshot.png", caption=None, timeout=20):
@@ -378,9 +392,10 @@ def cmd_status(controller, chat_id, args_text):
         uptime = _format_duration(controller.bot.uptime())
         lines = _tail_log(1)
         last_line = lines[0] if lines else "(no output yet)"
-        send_message(
+        send_code_message(
             chat_id,
-            f"🟢 RUNNING (pid {controller.bot.proc.pid})\nUptime: {uptime}\nLast log line:\n{last_line}",
+            header=f"🟢 RUNNING (pid {controller.bot.proc.pid}) — uptime {uptime}",
+            code_text=last_line,
         )
     else:
         send_message(chat_id, "🔴 STOPPED")
@@ -402,7 +417,7 @@ def cmd_logs(controller, chat_id, args_text):
     text = "\n".join(lines)
     if len(text) > 3500:  # stay well under Telegram's ~4096 char message limit
         text = text[-3500:]
-    send_message(chat_id, f"📋 Last {len(lines)} line(s):\n{text}")
+    send_code_message(chat_id, header=f"📋 Last {len(lines)} line(s):", code_text=text)
 
 
 def cmd_screenshot(controller, chat_id, args_text):

@@ -7,6 +7,30 @@ from unittest.mock import MagicMock, patch
 import controller
 
 
+class SendCodeMessageTests(unittest.TestCase):
+    @patch.object(controller, "send_message")
+    def test_wraps_text_in_markdown_code_block(self, send_message):
+        controller.send_code_message(123, "header", "line1\nline2")
+        args, kwargs = send_message.call_args
+        self.assertEqual(args[0], 123)
+        self.assertIn("```\nline1\nline2\n```", args[1])
+        self.assertTrue(args[1].startswith("header"))
+        self.assertEqual(kwargs["parse_mode"], "Markdown")
+
+    @patch.object(controller, "send_message")
+    def test_omits_header_when_empty(self, send_message):
+        controller.send_code_message(123, "", "line1")
+        args, _ = send_message.call_args
+        self.assertFalse(args[1].startswith("\n"))
+
+    @patch.object(controller, "send_message")
+    def test_escapes_backticks_to_avoid_breaking_code_block(self, send_message):
+        controller.send_code_message(123, "header", "some `code` here")
+        args, _ = send_message.call_args
+        self.assertNotIn("`code`", args[1])
+        self.assertIn("'code'", args[1])
+
+
 class FlagParsingTests(unittest.TestCase):
     def test_flags_to_answers_with_boost(self):
         flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n"}
