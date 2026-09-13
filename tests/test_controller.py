@@ -185,6 +185,43 @@ class AuthorizationTests(unittest.TestCase):
             self.assertFalse(c.is_authorized(111))
 
 
+class GetUpdatesFailureTests(unittest.TestCase):
+    @patch("controller.urllib.request.urlopen")
+    def test_returns_none_on_url_error(self, urlopen):
+        import urllib.error
+
+        urlopen.side_effect = urllib.error.URLError("connection reset")
+        self.assertIsNone(controller.get_updates(offset=0, timeout=0))
+
+    @patch("controller.urllib.request.urlopen")
+    def test_returns_none_on_generic_exception(self, urlopen):
+        urlopen.side_effect = Exception("read timed out")
+        self.assertIsNone(controller.get_updates(offset=0, timeout=0))
+
+    @patch("controller.urllib.request.urlopen")
+    def test_returns_list_on_success(self, urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({"result": [{"update_id": 1}]}).encode("utf-8")
+        urlopen.return_value.__enter__.return_value = response
+        self.assertEqual(controller.get_updates(offset=0, timeout=0), [{"update_id": 1}])
+
+
+class DrainBacklogTests(unittest.TestCase):
+    @patch("controller.get_updates")
+    def test_handles_none_without_raising(self, get_updates):
+        get_updates.return_value = None
+        c = controller.Controller()
+        c._drain_backlog()  # should not raise
+        self.assertEqual(c.offset, 0)
+
+    @patch("controller.get_updates")
+    def test_advances_offset_past_drained_updates(self, get_updates):
+        get_updates.return_value = [{"update_id": 5}, {"update_id": 7}]
+        c = controller.Controller()
+        c._drain_backlog()
+        self.assertEqual(c.offset, 8)
+
+
 class BotProcessGuardTests(unittest.TestCase):
     def test_start_refuses_when_already_running(self):
         bot = controller.BotProcess()

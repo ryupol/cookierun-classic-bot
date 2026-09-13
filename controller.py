@@ -148,6 +148,9 @@ def send_photo(chat_id, image_bytes, filename="screenshot.png", caption=None, ti
 
 
 def get_updates(offset, timeout=POLL_TIMEOUT):
+    """Long-poll Telegram for updates. Returns a list of updates, or None on
+    failure (network drop, sleep/wake, Telegram hiccup, etc.) so the caller
+    can back off instead of hammering the API in a tight loop."""
     params = urllib.parse.urlencode({"offset": offset, "timeout": timeout})
     url = f"{_api_url('getUpdates')}?{params}"
     request = urllib.request.Request(url, method="GET")
@@ -157,12 +160,10 @@ def get_updates(offset, timeout=POLL_TIMEOUT):
             return data.get("result", [])
     except (socket.gaierror, urllib.error.URLError) as e:
         print(f"⚠️ Telegram poll failed (network): {e}")
-        time.sleep(5)
-        return []
+        return None
     except Exception as e:
         print(f"⚠️ Telegram poll failed: {e}")
-        time.sleep(5)
-        return []
+        return None
 
 
 # -------------------
@@ -458,7 +459,7 @@ class Controller:
         return user_id in TELEGRAM_ALLOWED_USER_IDS
 
     def _drain_backlog(self):
-        updates = get_updates(self.offset, timeout=0)
+        updates = get_updates(self.offset, timeout=0) or []
         for update in updates:
             self.offset = update["update_id"] + 1
         if updates:
@@ -509,8 +510,21 @@ class Controller:
 
         print(f"🤖 Controller started. Allowed user id(s): {sorted(TELEGRAM_ALLOWED_USER_IDS)}")
         self._drain_backlog()
+        consecutive_failures = 0
         while True:
             updates = get_updates(self.offset)
+            if updates is None:
+                # Network hiccup (common right after the Mac wakes from
+                # sleep) — back off exponentially instead of hammering
+                # Telegram every loop, and stay quiet after the first
+                # few retries so a prolonged outage doesn't spam the log.
+                consecutive_failures += 1
+                wait = min(5 * (2 ** (consecutive_failures - 1)), 120)
+                if consecutive_failures <= 3:
+                    print(f"⏳ Retrying in {wait}s...")
+                time.sleep(wait)
+                continue
+            consecutive_failures = 0
             for update in updates:
                 self.offset = update["update_id"] + 1
                 if "message" in update:
