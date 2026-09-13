@@ -107,9 +107,9 @@ Managing the session:
 
 | Command | Effect |
 | --- | --- |
-| `/start [fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n]` | Starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. Bare `/start` reruns with the same flags as last time. |
-| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot finishes its current step and exits cleanly. |
-| `/kill` | Sends `SIGKILL`. Use only if `/stop` doesn't take effect. |
+| `/start [fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n]` | Launches CookieRun Classic via ADB if it isn't already running, waits for it to come up, then starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. Bare `/start` reruns with the same flags as last time. |
+| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot finishes its current step, exits cleanly, then the controller force-stops CookieRun Classic. |
+| `/kill` | Sends `SIGKILL`, then force-stops CookieRun Classic. Use only if `/stop` doesn't take effect. |
 | `/status` | Running/stopped, uptime, and the last line of `logs/bot.log`. |
 | `/logs [n]` | Last `n` lines of `logs/bot.log` (default 30, max 100). |
 | `/screenshot` | Captures the current BlueStacks screen via ADB and sends it as a photo. Works even if the bot is stopped or stuck, since it captures independently of the bot process. |
@@ -125,19 +125,25 @@ The controller replies with the exact answer sequence it sent, and you can doubl
 
 > **⚠️ Coupling note:** the `/start` flags map to the *order* of the questions in `prompt_user_options()` (`bot.py`). If those prompts are ever reordered or a new one is added, `controller.py`'s flag mapping needs to be updated to match, or answers will land on the wrong question. Always sanity-check a fresh `/start` against `/logs` after changing `bot.py`'s prompts.
 
+> **App lifecycle notes:**
+> - BlueStacks Air itself must already be running (the controller launches/closes the *game*, not the emulator).
+> - `/start` waits up to ~60s total for CookieRun Classic to launch (15s initial wait + up to 45s polling `pidof`) before giving up and replying with an error — it does **not** start the bot if the app fails to launch.
+> - `/stop`/`/kill` wait briefly (10s / 2s respectively) for the bot process to actually exit before force-stopping the app, so it isn't still mid-tap when the app closes. The app is force-stopped either way, even if the process didn't exit in time.
+> - This is independent of `bot.py`'s own `device_reset_app()` calls (used internally to recover from crashes/unknown stages while the bot is running) — those are unaffected by this change.
+
 ### Typical session from your phone
 
-1. Make sure BlueStacks Air is running with CookieRun Classic open (the controller doesn't launch BlueStacks itself).
+1. Make sure BlueStacks Air itself is running (the controller launches CookieRun Classic for you, but not the BlueStacks emulator).
 2. On your Mac, confirm the controller is up: `tmux ls` should list `cookiebot`. If not, see [Running the controller](#running-the-controller) above.
 3. In Telegram, open your bot's chat and send:
    ```
    /start fs=y cr=y rb=1 relic=n
    ```
-   You'll get back the pid and the exact stdin sequence sent.
+   The controller launches CookieRun Classic (if it isn't already open), waits for it to come up, then starts the bot and replies with the pid and the exact stdin sequence sent.
 4. Send `/logs` — confirm you see `✅ Selected: Double Coins` (or whichever boost you picked) and that the bot is progressing through stages.
 5. Send `/screenshot` anytime to see what BlueStacks is currently showing.
 6. Send `/status` to check uptime and the last thing the bot did.
-7. When you're done, send `/stop` (graceful) — you'll get a confirmation once it's shut down. If it doesn't stop within a minute or two, send `/kill`.
+7. When you're done, send `/stop` (graceful) — the bot exits, then CookieRun Classic is closed automatically; you'll get a confirmation for each. If it doesn't stop within a minute or two, send `/kill`.
 
 ## Requirements
 

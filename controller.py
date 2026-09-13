@@ -4,14 +4,19 @@ This lets you run the bot's terminal remotely from Telegram (e.g. from your
 phone) without changing bot.py, main.py, or anything else in the automation
 pipeline:
 
-    /start [fs=y|n cr=y|n rb=1-11|n relic=y|n]  -> spawns `python3 -u main.py`
-                                                    and pipes the answers to
-                                                    its interactive prompts
-                                                    over stdin
+    /start [fs=y|n cr=y|n rb=1-11|n relic=y|n]  -> launches CookieRun
+                                                    Classic via ADB (if not
+                                                    already running), spawns
+                                                    `python3 -u main.py`, and
+                                                    pipes the answers to its
+                                                    interactive prompts over
+                                                    stdin
     /stop                                        -> SIGINT to the whole
                                                      process group (same as
-                                                     pressing Ctrl+C)
-    /kill                                        -> SIGKILL backstop
+                                                     pressing Ctrl+C), then
+                                                     closes CookieRun Classic
+    /kill                                        -> SIGKILL backstop, then
+                                                     closes CookieRun Classic
     /status                                      -> running state + uptime
     /logs [n]                                    -> tail of logs/bot.log
     /screenshot                                  -> current BlueStacks frame,
@@ -47,13 +52,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from adb import device_connect
+from adb import device_connect, device_ensure_app_running, device_force_stop_app
 from config import (
     DEVICE_IP,
     DEVICE_PORT,
     TELEGRAM_ALLOWED_USER_IDS,
     TELEGRAM_BOT_TOKEN,
 )
+
+# CookieRun Classic's Android package. Only used by /start (to launch it
+# before spawning the bot) and /stop, /kill (to close it after signaling
+# the bot process) — bot.py's own device_reset_app() calls are unaffected.
+GAME_PACKAGE = "com.devsisters.crg"
 
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
@@ -340,10 +350,11 @@ class BotProcess:
 # -------------------
 HELP_TEXT = (
     "🍪 CookieRun Bot Controller\n\n"
-    "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n] — start the bot "
-    "(reuses last flags for anything omitted)\n"
-    "/stop — graceful stop (same as Ctrl+C)\n"
-    "/kill — force stop (SIGKILL)\n"
+    "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n] — launches CookieRun Classic "
+    "(if not already running) then starts the bot (reuses last flags for "
+    "anything omitted)\n"
+    "/stop — graceful stop (same as Ctrl+C), then closes CookieRun Classic\n"
+    "/kill — force stop (SIGKILL), then closes CookieRun Classic\n"
     "/status — running state, uptime, last log line\n"
     "/logs [n] — last n log lines (default 30, max 100)\n"
     "/screenshot — current BlueStacks screen\n"
@@ -362,6 +373,12 @@ def cmd_start(controller, chat_id, args_text):
     except ValueError as e:
         send_message(chat_id, f"❌ {e}\n\nUsage: /start fs=y cr=y rb=1 relic=n")
         return
+    send_message(chat_id, "📱 Launching CookieRun Classic...")
+    try:
+        device_ensure_app_running(DEVICE_IP, DEVICE_PORT, GAME_PACKAGE)
+    except Exception as e:
+        send_message(chat_id, f"❌ Couldn't launch CookieRun Classic: {e}")
+        return
     controller.bot.start(flags)
     controller.last_known_alive = True
     flag_str = " ".join(f"{k}={v}" for k, v in flags.items())
@@ -377,7 +394,8 @@ def cmd_stop(controller, chat_id, args_text):
         send_message(chat_id, "ℹ️ Bot is not running.")
         return
     controller.bot.stop()
-    send_message(chat_id, "🛑 Sent stop signal (Ctrl+C). Check /status shortly; use /kill to force.")
+    send_message(chat_id, "🛑 Sent stop signal (Ctrl+C). Waiting for it to exit before closing the app...")
+    _stop_app_after_exit(controller, chat_id)
 
 
 def cmd_kill(controller, chat_id, args_text):
@@ -386,6 +404,22 @@ def cmd_kill(controller, chat_id, args_text):
         return
     controller.bot.kill()
     send_message(chat_id, "☠️ Sent SIGKILL.")
+    _stop_app_after_exit(controller, chat_id, wait=2)
+
+
+def _stop_app_after_exit(controller, chat_id, wait=10, poll_interval=1):
+    """Wait briefly for the bot process to actually exit (so it isn't still
+    tapping the screen while we force-stop the app out from under it), then
+    close CookieRun Classic. Proceeds with the force-stop regardless of
+    whether the process exited in time."""
+    deadline = time.time() + wait
+    while controller.bot.is_running() and time.time() < deadline:
+        time.sleep(poll_interval)
+    try:
+        device_force_stop_app(DEVICE_IP, DEVICE_PORT, GAME_PACKAGE)
+        send_message(chat_id, "📱 Closed CookieRun Classic.")
+    except Exception as e:
+        send_message(chat_id, f"⚠️ Bot stopped, but couldn't close CookieRun Classic: {e}")
 
 
 def cmd_status(controller, chat_id, args_text):

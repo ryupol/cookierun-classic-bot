@@ -249,5 +249,111 @@ class BotProcessGuardTests(unittest.TestCase):
         self.assertEqual(bot.uptime(), 0)
 
 
+class CmdStartAppLifecycleTests(unittest.TestCase):
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_launches_app_before_starting_bot(self, send_message, ensure_running):
+        call_order = []
+        ensure_running.side_effect = lambda *a, **k: call_order.append("launch_app")
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 4242
+        c.bot.start.side_effect = lambda *a, **k: call_order.append("start_bot")
+
+        controller.cmd_start(c, 123, "fs=y cr=y rb=1 relic=n")
+
+        ensure_running.assert_called_once_with(
+            controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
+        )
+        c.bot.start.assert_called_once()
+        self.assertEqual(call_order, ["launch_app", "start_bot"])
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_does_not_start_bot_when_app_launch_fails(self, send_message, ensure_running):
+        ensure_running.side_effect = RuntimeError("app never came up")
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+
+        controller.cmd_start(c, 123, "")
+
+        c.bot.start.assert_not_called()
+        self.assertTrue(
+            any("Couldn't launch" in call.args[1] for call in send_message.call_args_list)
+        )
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_skips_app_launch_when_bot_already_running(self, send_message, ensure_running):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = True
+
+        controller.cmd_start(c, 123, "")
+
+        ensure_running.assert_not_called()
+        c.bot.start.assert_not_called()
+
+
+class CmdStopKillAppLifecycleTests(unittest.TestCase):
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_stop_closes_app_after_process_exits(self, send_message, force_stop):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        # is_running: True on the initial guard check, then False once the
+        # process has exited (simulates SIGINT taking effect quickly).
+        c.bot.is_running.side_effect = [True, False]
+
+        controller.cmd_stop(c, 123, "")
+
+        c.bot.stop.assert_called_once()
+        force_stop.assert_called_once_with(
+            controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
+        )
+
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_stop_noop_when_not_running(self, send_message, force_stop):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+
+        controller.cmd_stop(c, 123, "")
+
+        c.bot.stop.assert_not_called()
+        force_stop.assert_not_called()
+
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_kill_closes_app(self, send_message, force_stop):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+
+        controller.cmd_kill(c, 123, "")
+
+        c.bot.kill.assert_called_once()
+        force_stop.assert_called_once_with(
+            controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
+        )
+
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_app_close_failure_reports_but_does_not_raise(self, send_message, force_stop):
+        force_stop.side_effect = Exception("adb offline")
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+
+        controller.cmd_stop(c, 123, "")  # should not raise
+
+        self.assertTrue(
+            any("couldn't close" in call.args[1].lower() for call in send_message.call_args_list)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

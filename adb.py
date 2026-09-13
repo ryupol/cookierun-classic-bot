@@ -109,8 +109,8 @@ def device_is_app_running(ip: str, port: int, package: str) -> bool:
     return bool(result.stdout.strip())
 
 
-def device_reset_app(ip: str, port: int, package: str = "com.devsisters.crg", max_retries: int = 5):
-    print(f"🔄 Resetting app {package} on device at {ip}:{port}...")
+def device_force_stop_app(ip: str, port: int, package: str = "com.devsisters.crg"):
+    print(f"🛑 Force-stopping app {package} on device at {ip}:{port}...")
     subprocess.run(
         ["adb", "-s", f"{ip}:{port}", "shell", "cmd", "activity", "force-stop", package],
         stdout=subprocess.PIPE,
@@ -118,18 +118,51 @@ def device_reset_app(ip: str, port: int, package: str = "com.devsisters.crg", ma
         text=True,
         timeout=10
     )
+
+
+def device_launch_app(ip: str, port: int, package: str = "com.devsisters.crg"):
+    print(f"📱 Launching app {package} on device at {ip}:{port}...")
+    subprocess.run(
+        ["adb", "-s", f"{ip}:{port}", "shell", "monkey", "-p", package, "1"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10
+    )
+
+
+def device_ensure_app_running(ip: str, port: int, package: str = "com.devsisters.crg",
+                               launch_wait: int = 15, max_wait: int = 45, poll_interval: int = 3):
+    """Launch `package` if it isn't already running, then block until
+    `pidof` reports it alive, raising after `launch_wait + max_wait` seconds
+    total if it never comes up. Does not wait for the app's UI to finish
+    loading (splash/login screens) — bot.py's own unknown-stage watchdog
+    handles that once the bot's detection loop starts."""
+    if device_is_app_running(ip, port, package):
+        print(f"✅ App {package} is already running.")
+        return
+    device_launch_app(ip, port, package)
+    print(f"⏳ Waiting {launch_wait} seconds for app {package} to start...")
+    time.sleep(launch_wait)
+    deadline = time.time() + max_wait
+    while True:
+        if device_is_app_running(ip, port, package):
+            print(f"✅ App {package} is running.")
+            return
+        if time.time() >= deadline:
+            raise RuntimeError(f"App {package} did not start within {launch_wait + max_wait}s")
+        time.sleep(poll_interval)
+
+
+def device_reset_app(ip: str, port: int, package: str = "com.devsisters.crg", max_retries: int = 5):
+    print(f"🔄 Resetting app {package} on device at {ip}:{port}...")
+    device_force_stop_app(ip, port, package)
     print(f"⏳ Waiting 15 seconds for app {package} to stop...")
     time.sleep(15)
 
     for attempt in range(1, max_retries + 1):
         print(f"📱 Restarting app {package} on device at {ip}:{port} (attempt {attempt}/{max_retries})...")
-        subprocess.run(
-            ["adb", "-s", f"{ip}:{port}", "shell", "monkey", "-p", package, "1"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
+        device_launch_app(ip, port, package)
         print(f"⏳ Waiting 15 seconds to check if app started...")
         time.sleep(15)
 
