@@ -75,11 +75,33 @@ It does **not** replace `python3 main.py`; instead it spawns/stops that same pro
    ```
    `TELEGRAM_ALLOWED_USER_IDS` is comma-separated if you want more than one person to be able to control it. **Leave it empty and the controller refuses to start** — this prevents a leaked token from letting a stranger spawn processes on your Mac.
 4. **Message your bot once** on Telegram (anything, e.g. `/help`) so it can find your chat.
-5. **Run the controller** (instead of `main.py` directly), ideally inside `tmux` or `screen` so it survives you closing the terminal:
+5. **Install tmux** (keeps the controller running after you close the terminal) and confirm `caffeinate` is available (it ships with macOS):
    ```bash
-   source .venv/bin/activate
-   python3 controller.py
+   brew install tmux
+   which caffeinate   # should print /usr/bin/caffeinate
    ```
+
+### Running the controller
+
+Run it inside `tmux`, wrapped in `caffeinate -i` so macOS doesn't idle-sleep and drop the connection to Telegram:
+
+```bash
+cd /path/to/cookierun-classic-bot
+tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 controller.py"
+```
+
+> **Why `caffeinate -i`?** macOS's idle sleep (default ~15 min) tears down the network connection `controller.py` holds open for Telegram long-polling, which shows up as repeated `Connection reset by peer` / `read operation timed out` errors. `caffeinate -i` blocks idle sleep for as long as this process is running, and releases automatically when it exits.
+
+Managing the session:
+
+| Task | Command |
+| --- | --- |
+| Start it (only if not already running) | `tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 controller.py"` |
+| Check it's running | `tmux ls` — should list `cookiebot` |
+| View live output | `tmux attach -t cookiebot` |
+| Detach without stopping it | Press `Ctrl+b` then `d` (do **not** press `Ctrl+d` or type `exit` — that kills the session) |
+| Stop it | `tmux kill-session -t cookiebot` |
+| Restart after a crash/reboot | Run the "Start it" command again — `tmux new -s cookiebot` fails with "session already exists" if it's already up, so check `tmux ls` first |
 
 ### Commands
 
@@ -102,6 +124,20 @@ This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`
 The controller replies with the exact answer sequence it sent, and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
 
 > **⚠️ Coupling note:** the `/start` flags map to the *order* of the questions in `prompt_user_options()` (`bot.py`). If those prompts are ever reordered or a new one is added, `controller.py`'s flag mapping needs to be updated to match, or answers will land on the wrong question. Always sanity-check a fresh `/start` against `/logs` after changing `bot.py`'s prompts.
+
+### Typical session from your phone
+
+1. Make sure BlueStacks Air is running with CookieRun Classic open (the controller doesn't launch BlueStacks itself).
+2. On your Mac, confirm the controller is up: `tmux ls` should list `cookiebot`. If not, see [Running the controller](#running-the-controller) above.
+3. In Telegram, open your bot's chat and send:
+   ```
+   /start fs=y cr=y rb=1 relic=n
+   ```
+   You'll get back the pid and the exact stdin sequence sent.
+4. Send `/logs` — confirm you see `✅ Selected: Double Coins` (or whichever boost you picked) and that the bot is progressing through stages.
+5. Send `/screenshot` anytime to see what BlueStacks is currently showing.
+6. Send `/status` to check uptime and the last thing the bot did.
+7. When you're done, send `/stop` (graceful) — you'll get a confirmation once it's shut down. If it doesn't stop within a minute or two, send `/kill`.
 
 ## Requirements
 
