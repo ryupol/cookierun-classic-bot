@@ -26,6 +26,7 @@ UNKNOWN_STAGE_RESET_TIMEOUT = {
 }
 MAX_UNKNOWN_STAGE_RESTARTS = 3  # give up (stop bot) after this many consecutive stage-unknown restarts
 MAX_FAILED_TO_RETRIEVE_DATA_RETRIES = 3  # after this many Confirm taps, force a full app restart instead
+MAX_GAME_COMPLETE_RETRIES = 3  # after this many Finish taps, force a full app restart instead (screen can get stuck here)
 
 # -------------------
 # ALERTS (Telegram)

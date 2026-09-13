@@ -55,6 +55,7 @@ from config import (
     SESSION_RESET_INTERVAL,
     LIVES_INTERVAL,
     MAX_FAILED_TO_RETRIEVE_DATA_RETRIES,
+    MAX_GAME_COMPLETE_RETRIES,
     MAX_UNKNOWN_STAGE_RESTARTS,
     UNKNOWN_STAGE_RESET_TIMEOUT,
 )
@@ -170,6 +171,7 @@ def main():
         unknown_stage_since = None
         unknown_restart_count = 0
         data_retry_count = 0
+        game_complete_retry_count = 0
 
         while True:
             device_screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
@@ -219,6 +221,8 @@ def main():
                 unknown_restart_count = 0
                 if stage != "FAILED_TO_RETRIEVE_DATA":
                     data_retry_count = 0
+                if stage != "GAME_COMPLETE":
+                    game_complete_retry_count = 0
 
             if stage == last_stage:
                 time.sleep(0.1)
@@ -296,9 +300,27 @@ def main():
                     using_cookie_relay()
                 detection_group = "IN_GAME"
             elif stage == "GAME_COMPLETE":
-                print("✅ Detected Stage: GAME_COMPLETE")
-                complete_finish()
-                detection_group = "POST_GAME"
+                game_complete_retry_count += 1
+                print(f"✅ Detected Stage: GAME_COMPLETE (attempt {game_complete_retry_count}/{MAX_GAME_COMPLETE_RETRIES})")
+                if game_complete_retry_count >= MAX_GAME_COMPLETE_RETRIES:
+                    print(f"❌ GAME_COMPLETE kept reappearing after {MAX_GAME_COMPLETE_RETRIES} Finish taps. Forcing full app restart...")
+                    save_debug_screen(device_screen)
+                    device_reset_app(DEVICE_IP, DEVICE_PORT)
+                    time.sleep(5)
+                    close_announcement_dialog()
+                    session_start_time = time.time()
+                    session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
+                    last_lives_time = time.time()
+                    lives_interval = random.uniform(*LIVES_INTERVAL)
+                    pending_send_friend_life = False
+                    detection_group = "PRE_GAME"
+                    last_detected_time = time.time()
+                    is_first_game = True
+                    game_complete_retry_count = 0
+                else:
+                    complete_finish()
+                    detection_group = "POST_GAME"
+                last_stage = None
             elif stage == "MYSTERY_BOX":
                 print("🎁 Detected Stage: MYSTERY_BOX")
                 accept_mystery_box()
