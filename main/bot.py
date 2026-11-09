@@ -31,6 +31,7 @@ from services.actions import (
     purchase_desired_random_boost,
     purchase_fast_start,
     start_game,
+    start_special_episode,
     using_cookie_relay,
     using_fast_start,
     recover_friend_overlay,
@@ -274,6 +275,14 @@ def main():
                 is_first_game = False
                 start_game()
                 detection_group = "PRE_GAME"
+            elif stage == "SPECIAL_MAINMENU":
+                print("🏴‍☠️ Detected Stage: SPECIAL_MAINMENU")
+                # Special Episodes have no purchase/store page: PLAY opens
+                # the episode intro, a second tap starts the run.
+                start_special_episode()
+                detection_group = "IN_GAME"
+                time.sleep(0.2)
+                last_stage = None
             elif stage == "PURCHASE_ITEM":
                 print("🛒 Detected Stage: PURCHASE_ITEM")
                 if options["use_fast_start"]:
