@@ -26,10 +26,11 @@ class DeviceLaunchAppTests(unittest.TestCase):
         )
 
 
+@patch("adb.device_connect")
 class DeviceEnsureAppRunningTests(unittest.TestCase):
     @patch("adb.device_launch_app")
     @patch("adb.device_is_app_running")
-    def test_noop_when_already_running(self, is_running, launch_app):
+    def test_noop_when_already_running(self, is_running, launch_app, _connect):
         is_running.return_value = True
         adb.device_ensure_app_running("127.0.0.1", 5555, "pkg")
         launch_app.assert_not_called()
@@ -37,7 +38,7 @@ class DeviceEnsureAppRunningTests(unittest.TestCase):
     @patch("adb.time.sleep")
     @patch("adb.device_launch_app")
     @patch("adb.device_is_app_running")
-    def test_launches_and_waits_when_not_running(self, is_running, launch_app, _sleep):
+    def test_launches_and_waits_when_not_running(self, is_running, launch_app, _sleep, _connect):
         # not running -> launch -> now running
         is_running.side_effect = [False, True]
         adb.device_ensure_app_running("127.0.0.1", 5555, "pkg", launch_wait=1, max_wait=5, poll_interval=1)
@@ -47,7 +48,7 @@ class DeviceEnsureAppRunningTests(unittest.TestCase):
     @patch("adb.time.sleep")
     @patch("adb.device_launch_app")
     @patch("adb.device_is_app_running")
-    def test_raises_after_timeout(self, is_running, launch_app, _sleep, mock_time):
+    def test_raises_after_timeout(self, is_running, launch_app, _sleep, mock_time, _connect):
         is_running.return_value = False
         # Simulate the clock advancing past the deadline immediately.
         mock_time.side_effect = [0, 100, 100]

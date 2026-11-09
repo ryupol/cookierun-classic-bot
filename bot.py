@@ -172,10 +172,16 @@ def main():
         unknown_restart_count = 0
         data_retry_count = 0
         game_complete_retry_count = 0
+        first_detection = True
 
         while True:
             device_screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
-            stage = detect_stage(device_screen, get_detection_stage_names(detection_group, exclude=relic_exclude))
+            if first_detection:
+                # A fresh process may attach to a game left open by /pause.
+                stage = detect_stage(device_screen, exclude=relic_exclude)
+                first_detection = False
+            else:
+                stage = detect_stage(device_screen, get_detection_stage_names(detection_group, exclude=relic_exclude))
             if stage is None:
                 if time.time() - last_detected_time >= DETECTION_RECOVERY_SCAN_INTERVAL[detection_group]:
                     stage = detect_stage(device_screen, exclude=relic_exclude)

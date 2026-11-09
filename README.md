@@ -62,7 +62,7 @@ Leave BlueStacks running with CookieRun Classic open before starting the bot. St
 
 `controller.py` lets you run the bot's terminal remotely from Telegram — useful if the bot runs on a MacBook you're not sitting in front of (e.g. controlling it from your phone).
 
-It does **not** replace `python3 main.py`; instead it spawns/stops that same process for you and answers its prompts over stdin, so `bot.py` itself is unchanged.
+It does **not** replace `python3 main.py`; instead it spawns/stops that same process for you and answers its prompts over stdin. On startup, `bot.py` scans the current game screen so it can reconnect after a pause.
 
 ### Setup
 
@@ -92,7 +92,18 @@ tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 con
 
 > **Why `caffeinate -i`?** macOS's idle sleep (default ~15 min) tears down the network connection `controller.py` holds open for Telegram long-polling, which shows up as repeated `Connection reset by peer` / `read operation timed out` errors. `caffeinate -i` blocks idle sleep for as long as this process is running, and releases automatically when it exits.
 
-Managing the session:
+Shortcut — `cookiebot.sh` wraps the tmux commands below:
+
+```bash
+./cookiebot.sh start      # start controller (no-op if already running)
+./cookiebot.sh stop       # stop controller (also stops the bot it spawned)
+./cookiebot.sh restart    # stop + start (use after editing code)
+./cookiebot.sh status     # controller/bot state + last log lines
+./cookiebot.sh logs       # follow logs/bot.log
+./cookiebot.sh attach     # attach to tmux (detach: Ctrl+b then d)
+```
+
+Managing the session manually:
 
 | Task | Command |
 | --- | --- |
@@ -108,18 +119,45 @@ Managing the session:
 | Command | Effect |
 | --- | --- |
 | `/start [fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n]` | Launches CookieRun Classic via ADB if it isn't already running, waits for it to come up, then starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. Bare `/start` reruns with the same flags as last time. |
-| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot finishes its current step, exits cleanly, then the controller force-stops CookieRun Classic. |
+| `/pause` | Stops bot automation with `SIGINT` but leaves CookieRun Classic open so you can edit your build manually. Wait for the PAUSED confirmation, then use `/start` to restart automation with the saved flags. The game itself keeps running. |
+| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot exits, then the controller force-stops CookieRun Classic. Also closes the game when the bot is PAUSED. |
 | `/kill` | Sends `SIGKILL`, then force-stops CookieRun Classic. Use only if `/stop` doesn't take effect. |
-| `/status` | Running/stopped, uptime, and the last line of `logs/bot.log`. |
+| `/status` | RUNNING, PAUSING, PAUSED, or STOPPED. When running, also shows uptime and the last line of `logs/bot.log`. |
 | `/logs [n]` | Last `n` lines of `logs/bot.log` (default 30, max 100). |
 | `/screenshot` | Captures the current BlueStacks screen via ADB and sends it as a photo. Works even if the bot is stopped or stuck, since it captures independently of the bot process. |
+| `/guide` | Explains the `/start` flags and boost numbers, right in the chat. |
 | `/help` | Lists all commands. |
+
+**`/start` flags:**
+
+| Flag | Values | Meaning |
+| --- | --- | --- |
+| `fs` | `y` / `n` | Fast Start — buy and use it at the start of the run |
+| `cr` | `y` / `n` | Cookie Relay — buy and use it |
+| `rb` | `1`-`11` / `n` | Desired Random Boost — buy and use it, picking boost number below; `n` skips this power-up entirely |
+| `relic` | `y` / `n` | Detect Relic — open and claim relics when seen |
+
+**`rb` boost numbers** (from `bot.py`'s `BOOST_CHOICES`):
+
+| # | Boost |
+| --- | --- |
+| 1 | Double Coins |
+| 2 | +15% Score Bonus |
+| 3 | -15% HP Drain |
+| 4 | Revive Once with 80 HP |
+| 5 | 70% Crush Chance |
+| 6 | +17% Base Speed |
+| 7 | Gold Coin Magic |
+| 8 | -30% Collision Damage |
+| 9 | +20% HP from Potions |
+| 10 | Magnetic Aura |
+| 11 | 2 Pit Lifts |
 
 Example:
 ```
 /start fs=y cr=y rb=1 relic=n
 ```
-This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`, `n` to its prompts (Fast Start, Cookie Relay, Desired Random Boost, boost #1 = Double Coins, Detect Relic). `rb` is the number from the `Select desired boost` list `bot.py` prints (1–11); use `rb=n` to skip that power-up entirely.
+This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`, `n` to its prompts (Fast Start, Cookie Relay, Desired Random Boost, boost #1 = Double Coins, Detect Relic).
 
 The controller replies with the exact answer sequence it sent, and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
 
@@ -129,6 +167,7 @@ The controller replies with the exact answer sequence it sent, and you can doubl
 > - BlueStacks Air itself must already be running (the controller launches/closes the *game*, not the emulator).
 > - `/start` waits up to ~60s total for CookieRun Classic to launch (15s initial wait + up to 45s polling `pidof`) before giving up and replying with an error — it does **not** start the bot if the app fails to launch.
 > - `/stop`/`/kill` wait briefly (10s / 2s respectively) for the bot process to actually exit before force-stopping the app, so it isn't still mid-tap when the app closes. The app is force-stopped either way, even if the process didn't exit in time.
+> - `/pause` waits up to 10s for the bot to exit. If it takes longer, `/status` shows PAUSING until the process exits. The game stays open throughout. `/start` begins a fresh bot process and scans the current screen; it does not restore the previous Python process state.
 > - This is independent of `bot.py`'s own `device_reset_app()` calls (used internally to recover from crashes/unknown stages while the bot is running) — those are unaffected by this change.
 
 ### Typical session from your phone
@@ -143,7 +182,8 @@ The controller replies with the exact answer sequence it sent, and you can doubl
 4. Send `/logs` — confirm you see `✅ Selected: Double Coins` (or whichever boost you picked) and that the bot is progressing through stages.
 5. Send `/screenshot` anytime to see what BlueStacks is currently showing.
 6. Send `/status` to check uptime and the last thing the bot did.
-7. When you're done, send `/stop` (graceful) — the bot exits, then CookieRun Classic is closed automatically; you'll get a confirmation for each. If it doesn't stop within a minute or two, send `/kill`.
+7. To edit your build, send `/pause`, wait for PAUSED, then make your changes on the laptop. Send `/start` to restart automation using the saved flags.
+8. When you're done, send `/stop` — the bot exits and CookieRun Classic closes. This also closes the game if you are PAUSED. If it doesn't stop, send `/kill`.
 
 ## Requirements
 

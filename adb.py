@@ -122,13 +122,15 @@ def device_force_stop_app(ip: str, port: int, package: str = "com.devsisters.crg
 
 def device_launch_app(ip: str, port: int, package: str = "com.devsisters.crg"):
     print(f"📱 Launching app {package} on device at {ip}:{port}...")
-    subprocess.run(
+    result = subprocess.run(
         ["adb", "-s", f"{ip}:{port}", "shell", "monkey", "-p", package, "1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         timeout=10
     )
+    if result.returncode != 0:
+        print(f"⚠️ Launch command failed: {(result.stderr or result.stdout).strip()}")
 
 
 def device_ensure_app_running(ip: str, port: int, package: str = "com.devsisters.crg",
@@ -138,6 +140,7 @@ def device_ensure_app_running(ip: str, port: int, package: str = "com.devsisters
     total if it never comes up. Does not wait for the app's UI to finish
     loading (splash/login screens) — bot.py's own unknown-stage watchdog
     handles that once the bot's detection loop starts."""
+    device_connect(ip, port)  # BlueStacks drops the adb link; reconnect first.
     if device_is_app_running(ip, port, package):
         print(f"✅ App {package} is already running.")
         return

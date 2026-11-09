@@ -495,7 +495,8 @@ def handle_quick_receive_and_send_lives():
     safe_device_tap(DEVICE_IP, DEVICE_PORT, QUICK_RECEIVE_AND_SEND_LIVES_BUTTON[0], QUICK_RECEIVE_AND_SEND_LIVES_BUTTON[1])
     time.sleep(random.uniform(0.8, 1.4))
     # Tap all send life buttons
-    while True:
+    deadline = time.monotonic() + SEND_LIFE_MAX_DURATION
+    while time.monotonic() < deadline:
         # Check if all lifes received and sent!, so break the loop
         screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
         all_lives_received_and_sent = detect_templates(screen, ALL_LIVES_RECEIVED_AND_SENT_TEMPLATE, ALL_LIVES_RECEIVED_AND_SENT_REGION)
@@ -507,14 +508,16 @@ def handle_quick_receive_and_send_lives():
             # Close the mail dialog
             safe_device_tap(DEVICE_IP, DEVICE_PORT, MAIL_BOX_CLOSE_BUTTON[0], MAIL_BOX_CLOSE_BUTTON[1])
             time.sleep(random.uniform(0.8, 1.4))
-            break
+            return
         # Send lifes to friends
         confirm_send_life_button_coords = detect_templates(screen, CONFIRM_SEND_LIFE_TEMPLATE, CONFIRM_SEND_LIFE_REGION)
         if confirm_send_life_button_coords:
             print("✉️ Sending lives to friends...")
             safe_device_tap(DEVICE_IP, DEVICE_PORT, CONFIRM_SEND_LIFE_BUTTON[0], CONFIRM_SEND_LIFE_BUTTON[1])
             time.sleep(random.uniform(0.8, 1.4))
-    print("✉️ Quick Receive and Send Lives completed.")
+    print(f"⚠️ Quick Receive and Send Lives did not finish within {SEND_LIFE_MAX_DURATION:.0f}s. Giving up, closing mail dialog...")
+    safe_device_tap(DEVICE_IP, DEVICE_PORT, MAIL_BOX_CLOSE_BUTTON[0], MAIL_BOX_CLOSE_BUTTON[1])
+    time.sleep(random.uniform(0.8, 1.4))
 
 
 def close_announcement_dialog():

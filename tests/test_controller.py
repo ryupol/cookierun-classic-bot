@@ -354,6 +354,129 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
             any("couldn't close" in call.args[1].lower() for call in send_message.call_args_list)
         )
 
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_stop_closes_app_from_paused_state(self, send_message, force_stop):
+        c = controller.Controller()
+        c.paused = True
+
+        controller.cmd_stop(c, 123, "")
+
+        force_stop.assert_called_once_with(
+            controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
+        )
+        self.assertFalse(c.paused)
+
+    @patch("controller.device_force_stop_app", side_effect=RuntimeError("adb offline"))
+    @patch.object(controller, "send_message")
+    def test_stop_from_paused_can_retry_app_close(self, send_message, force_stop):
+        c = controller.Controller()
+        c.paused = True
+
+        controller.cmd_stop(c, 123, "")
+
+        self.assertTrue(c.paused)
+
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_kill_closes_app_from_paused_state(self, send_message, force_stop):
+        c = controller.Controller()
+        c.paused = True
+
+        controller.cmd_kill(c, 123, "")
+
+        force_stop.assert_called_once()
+        self.assertFalse(c.paused)
+
+
+class CmdPauseTests(unittest.TestCase):
+    @patch("controller.device_force_stop_app")
+    @patch.object(controller, "send_message")
+    def test_pause_waits_for_exit_and_leaves_game_open(self, send_message, force_stop):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+        c.bot.proc.poll.return_value = 0
+        c.bot.proc.returncode = 0
+        c.last_known_alive = True
+
+        controller.cmd_pause(c, 123, "")
+
+        c.bot.stop.assert_called_once()
+        force_stop.assert_not_called()
+        self.assertTrue(c.paused)
+        self.assertFalse(c.pause_pending)
+        self.assertTrue(any("PAUSED" in call.args[1] for call in send_message.call_args_list))
+
+    @patch("controller._wait_for_bot_exit")
+    @patch.object(controller, "send_message")
+    def test_slow_exit_stays_pausing_until_child_exits(self, send_message, wait_for_exit):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = True
+        c.bot.proc.poll.side_effect = [None, 0]
+        c.bot.proc.returncode = 0
+        c.last_known_alive = True
+
+        controller.cmd_pause(c, 123, "")
+
+        self.assertTrue(c.pause_pending)
+        self.assertFalse(c.paused)
+        controller.cmd_status(c, 123, "")
+        self.assertIn("PAUSING", send_message.call_args.args[1])
+
+        c._check_child_exit()
+
+        self.assertFalse(c.pause_pending)
+        self.assertTrue(c.paused)
+        self.assertIn("PAUSED", send_message.call_args.args[1])
+        self.assertFalse(c.last_known_alive)
+
+    @patch.object(controller, "send_message")
+    def test_start_rejected_while_pausing(self, send_message):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.pause_pending = True
+
+        controller.cmd_start(c, 123, "")
+
+        c.bot.start.assert_not_called()
+        self.assertIn("still pausing", send_message.call_args.args[1])
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_start_from_paused_reuses_last_flags(self, send_message, ensure_running):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 4242
+        c.paused = True
+        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
+        with patch.object(controller, "_load_last_start", return_value=flags):
+            controller.cmd_start(c, 123, "")
+
+        c.bot.start.assert_called_once_with(flags)
+        self.assertFalse(c.paused)
+
+    @patch("controller.device_ensure_app_running", side_effect=RuntimeError("adb offline"))
+    @patch.object(controller, "send_message")
+    def test_failed_start_leaves_paused_state(self, send_message, ensure_running):
+        c = controller.Controller()
+        c.paused = True
+
+        controller.cmd_start(c, 123, "")
+
+        self.assertTrue(c.paused)
+
+    @patch.object(controller, "send_message")
+    def test_status_reports_paused(self, send_message):
+        c = controller.Controller()
+        c.paused = True
+
+        controller.cmd_status(c, 123, "")
+
+        self.assertIn("PAUSED", send_message.call_args.args[1])
+
 
 if __name__ == "__main__":
     unittest.main()

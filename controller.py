@@ -1,8 +1,7 @@
 """Telegram remote control for the CookieRun Classic bot.
 
 This lets you run the bot's terminal remotely from Telegram (e.g. from your
-phone) without changing bot.py, main.py, or anything else in the automation
-pipeline:
+phone) while keeping bot automation in its own child process:
 
     /start [fs=y|n cr=y|n rb=1-11|n relic=y|n]  -> launches CookieRun
                                                     Classic via ADB (if not
@@ -15,6 +14,9 @@ pipeline:
                                                      process group (same as
                                                      pressing Ctrl+C), then
                                                      closes CookieRun Classic
+    /pause                                       -> SIGINT to the bot, leaving
+                                                     CookieRun Classic open;
+                                                     use /start to restart
     /kill                                        -> SIGKILL backstop, then
                                                      closes CookieRun Classic
     /status                                      -> running state + uptime
@@ -22,6 +24,8 @@ pipeline:
     /screenshot                                  -> current BlueStacks frame,
                                                      captured independently of
                                                      whether the bot is running
+    /guide                                       -> explains the /start flags
+                                                     and boost numbers
     /help                                        -> command list
 
 IMPORTANT COUPLING NOTE: the /start flag -> stdin mapping below hard-codes
@@ -353,16 +357,43 @@ HELP_TEXT = (
     "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n] — launches CookieRun Classic "
     "(if not already running) then starts the bot (reuses last flags for "
     "anything omitted)\n"
+    "/pause — stop bot taps, leave CookieRun Classic open; /start to restart\n"
     "/stop — graceful stop (same as Ctrl+C), then closes CookieRun Classic\n"
     "/kill — force stop (SIGKILL), then closes CookieRun Classic\n"
     "/status — running state, uptime, last log line\n"
     "/logs [n] — last n log lines (default 30, max 100)\n"
     "/screenshot — current BlueStacks screen\n"
+    "/guide — explain the /start flags and boost numbers\n"
     "/help — this message"
+)
+
+GUIDE_TEXT = (
+    "📖 /start flags\n\n"
+    "fs=y|n — Fast Start: buy + use it\n"
+    "cr=y|n — Cookie Relay: buy + use it\n"
+    "rb=1-11|n — Desired Random Boost: buy + use the boost number below, "
+    "or n to skip\n"
+    "relic=y|n — Detect Relic: open + claim relics when seen\n\n"
+    "🎲 rb boost numbers\n"
+    "1. Double Coins\n"
+    "2. +15% Score Bonus\n"
+    "3. -15% HP Drain\n"
+    "4. Revive Once with 80 HP\n"
+    "5. 70% Crush Chance\n"
+    "6. +17% Base Speed\n"
+    "7. Gold Coin Magic\n"
+    "8. -30% Collision Damage\n"
+    "9. +20% HP from Potions\n"
+    "10. Magnetic Aura\n"
+    "11. 2 Pit Lifts\n\n"
+    "Example: /start fs=y cr=y rb=1 relic=n"
 )
 
 
 def cmd_start(controller, chat_id, args_text):
+    if controller.pause_pending:
+        send_message(chat_id, "⏳ Bot is still pausing. Wait for the PAUSED message before /start.")
+        return
     if controller.bot.is_running():
         send_message(chat_id, "⚠️ Bot is already running. Use /stop first.")
         return
@@ -381,6 +412,7 @@ def cmd_start(controller, chat_id, args_text):
         return
     controller.bot.start(flags)
     controller.last_known_alive = True
+    controller.paused = False
     flag_str = " ".join(f"{k}={v}" for k, v in flags.items())
     answers_str = " ".join(flags_to_answers(flags))
     send_message(
@@ -389,22 +421,61 @@ def cmd_start(controller, chat_id, args_text):
     )
 
 
-def cmd_stop(controller, chat_id, args_text):
+def cmd_pause(controller, chat_id, args_text):
+    if controller.pause_pending:
+        send_message(chat_id, "⏳ Bot is still pausing.")
+        return
+    if controller.paused:
+        send_message(chat_id, "⏸️ Bot is already paused. Use /start when ready.")
+        return
     if not controller.bot.is_running():
         send_message(chat_id, "ℹ️ Bot is not running.")
         return
+    if not controller.bot.stop():
+        send_message(chat_id, "ℹ️ Bot process already exited. Check /status.")
+        return
+    controller.pause_pending = True
+    controller.pause_chat_id = chat_id
+    _wait_for_bot_exit(controller.bot, wait=10)
+    controller._check_child_exit()
+    if controller.pause_pending:
+        send_message(chat_id, "⏳ Bot is still stopping. CookieRun Classic stays open; /status will show PAUSING.")
+
+
+def cmd_stop(controller, chat_id, args_text):
+    if controller.paused:
+        if _stop_app_after_exit(controller, chat_id):
+            controller.paused = False
+        return
+    if not controller.bot.is_running():
+        send_message(chat_id, "ℹ️ Bot is not running.")
+        return
+    controller.pause_pending = False
+    controller.pause_chat_id = None
     controller.bot.stop()
     send_message(chat_id, "🛑 Sent stop signal (Ctrl+C). Waiting for it to exit before closing the app...")
     _stop_app_after_exit(controller, chat_id)
 
 
 def cmd_kill(controller, chat_id, args_text):
+    if controller.paused:
+        if _stop_app_after_exit(controller, chat_id, wait=2):
+            controller.paused = False
+        return
     if not controller.bot.is_running():
         send_message(chat_id, "ℹ️ Bot is not running.")
         return
+    controller.pause_pending = False
+    controller.pause_chat_id = None
     controller.bot.kill()
     send_message(chat_id, "☠️ Sent SIGKILL.")
     _stop_app_after_exit(controller, chat_id, wait=2)
+
+
+def _wait_for_bot_exit(bot, wait, poll_interval=0.5):
+    deadline = time.monotonic() + wait
+    while bot.is_running() and time.monotonic() < deadline:
+        time.sleep(poll_interval)
 
 
 def _stop_app_after_exit(controller, chat_id, wait=10, poll_interval=1):
@@ -412,18 +483,22 @@ def _stop_app_after_exit(controller, chat_id, wait=10, poll_interval=1):
     tapping the screen while we force-stop the app out from under it), then
     close CookieRun Classic. Proceeds with the force-stop regardless of
     whether the process exited in time."""
-    deadline = time.time() + wait
-    while controller.bot.is_running() and time.time() < deadline:
-        time.sleep(poll_interval)
+    _wait_for_bot_exit(controller.bot, wait, poll_interval)
     try:
         device_force_stop_app(DEVICE_IP, DEVICE_PORT, GAME_PACKAGE)
         send_message(chat_id, "📱 Closed CookieRun Classic.")
+        return True
     except Exception as e:
         send_message(chat_id, f"⚠️ Bot stopped, but couldn't close CookieRun Classic: {e}")
+        return False
 
 
 def cmd_status(controller, chat_id, args_text):
-    if controller.bot.is_running():
+    if controller.pause_pending:
+        send_message(chat_id, "⏳ PAUSING — waiting for bot process to exit; game stays open")
+    elif controller.paused:
+        send_message(chat_id, "⏸️ PAUSED — game is open; use /start to restart automation")
+    elif controller.bot.is_running():
         uptime = _format_duration(controller.bot.uptime())
         lines = _tail_log(1)
         last_line = lines[0] if lines else "(no output yet)"
@@ -468,13 +543,19 @@ def cmd_help(controller, chat_id, args_text):
     send_message(chat_id, HELP_TEXT)
 
 
+def cmd_guide(controller, chat_id, args_text):
+    send_message(chat_id, GUIDE_TEXT)
+
+
 COMMANDS = {
     "/start": cmd_start,
+    "/pause": cmd_pause,
     "/stop": cmd_stop,
     "/kill": cmd_kill,
     "/status": cmd_status,
     "/logs": cmd_logs,
     "/screenshot": cmd_screenshot,
+    "/guide": cmd_guide,
     "/help": cmd_help,
 }
 
@@ -488,6 +569,9 @@ class Controller:
         self.offset = 0
         self.last_chat_id = None
         self.last_known_alive = False
+        self.pause_pending = False
+        self.paused = False
+        self.pause_chat_id = None
 
     def is_authorized(self, user_id):
         return user_id in TELEGRAM_ALLOWED_USER_IDS
@@ -501,9 +585,17 @@ class Controller:
 
     def _check_child_exit(self):
         proc = self.bot.proc
-        if proc is not None and self.last_known_alive and proc.poll() is not None:
+        if proc is not None and (self.last_known_alive or self.pause_pending) and proc.poll() is not None:
             self.last_known_alive = False
             code = proc.returncode
+            if self.pause_pending:
+                self.pause_pending = False
+                self.paused = True
+                print(f"⏸️ Bot process paused (exit code {code}).")
+                if self.pause_chat_id is not None:
+                    send_message(self.pause_chat_id, "⏸️ PAUSED — bot taps stopped; CookieRun Classic is still open. Use /start when ready.")
+                self.pause_chat_id = None
+                return
             print(f"🔴 Bot process exited (code {code}).")
             if self.last_chat_id is not None:
                 send_message(self.last_chat_id, f"🔴 Bot process exited (code {code}). Check /logs.")
@@ -517,6 +609,7 @@ class Controller:
         if not self.is_authorized(user_id):
             print(f"⛔ Rejected command from unauthorized user_id={user_id}: {text!r}")
             return
+        self._check_child_exit()
         self.last_chat_id = chat_id
         parts = text.strip().split(maxsplit=1)
         command = parts[0].lower().split("@")[0]
@@ -583,6 +676,11 @@ def main():
 
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
+    # tmux kill-session sends SIGHUP to the pane process. Without a handler,
+    # Python terminates immediately and skips atexit cleanup, orphaning the
+    # detached bot subprocess (it has its own process group via
+    # start_new_session=True, so it survives tmux's teardown otherwise).
+    signal.signal(signal.SIGHUP, _on_signal)
     controller.run()
 
 
