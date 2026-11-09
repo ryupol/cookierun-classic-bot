@@ -336,7 +336,7 @@ EXIT_GAME_SETTINGS_BUTTON = (1116, 98)
 # Special Episode entry: the hub's PLAY! button. The episode page that opens
 # after the first tap has its own PLAY! at the same spot, so the flow is
 # just two taps on the same button (no purchase/store page exists).
-SPECIAL_PLAY_BUTTON = (1025, 620)  # bottom-right PLAY! button; confirmed via debug frame 2026-11-09
+SPECIAL_PLAY_BUTTON = PLAY_BUTTON  # same button, same position as the normal lobby PLAY
 
 # -------------------
 # ANTI-BOT CAPTCHA
