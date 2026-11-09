@@ -533,11 +533,11 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(
             labels[:5],
             [
-                "⚡ Fast Start: ✅",
-                "🍪 Cookie Relay: ❌",
-                "🏺 Relic: ❌",
-                "🐇 7 Jumps: ✅",
-                "🎲 Random Boost: -15% HP Drain ✅",
+                "⚡ Fast Start",
+                "🍪 Cookie Relay",
+                "🏺 Relic",
+                "🐇 7 Jumps",
+                "🎲 Random Boost: -15% HP Drain",
             ],
         )
         # Boost picker: 11 named buttons (no numbers), exactly one marked.
@@ -548,15 +548,20 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
         self.assertEqual(labels[16:], ["▶️ Start"])
 
-    def test_board_button_styles_distinguish_groups(self):
-        flags = {"fs": "n", "cr": "n", "rb": "1", "relic": "n", "7j": "n"}
+    def test_board_button_styles_mean_highlight_is_on(self):
+        flags = {"fs": "y", "cr": "n", "rb": "1", "relic": "n", "7j": "y"}
         buttons = [b for row in controller.board_keyboard(flags)["inline_keyboard"] for b in row]
         by_callback = {b["callback_data"]: b for b in buttons}
-        for key in ("fs", "cr", "relic", "7j"):
+        # ON options are highlighted, OFF options stay plain.
+        for key in ("fs", "7j"):
             self.assertEqual(by_callback[f"toggle:{key}"].get("style"), "primary")
+        for key in ("cr", "relic"):
+            self.assertNotIn("style", by_callback[f"toggle:{key}"])
         self.assertEqual(by_callback["toggle:rb"].get("style"), "primary")
         self.assertEqual(by_callback["board:start"].get("style"), "success")
-        for i in range(1, controller.BOOST_COUNT + 1):
+        # Picker: only the selected boost is highlighted.
+        self.assertEqual(by_callback["setrb:1"].get("style"), "primary")
+        for i in range(2, controller.BOOST_COUNT + 1):
             self.assertNotIn("style", by_callback[f"setrb:{i}"])
 
     def test_board_keyboard_hides_picker_when_rb_off(self):
@@ -565,11 +570,11 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "⚡ Fast Start: ❌",
-                "🍪 Cookie Relay: ❌",
-                "🏺 Relic: ❌",
-                "🐇 7 Jumps: ❌",
-                "🎲 Random Boost: ❌",
+                "⚡ Fast Start",
+                "🍪 Cookie Relay",
+                "🏺 Relic",
+                "🐇 7 Jumps",
+                "🎲 Random Boost",
                 "▶️ Start",
             ],
         )
@@ -594,8 +599,8 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(c.boards[123]["flags"]["rb"], "3")
         self.assertEqual(c.boards[123]["flags"]["7j"], "n")
         labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
-        self.assertIn("⚡ Fast Start: ✅", labels)
-        self.assertIn("🎲 Random Boost: -15% HP Drain ✅", labels)
+        self.assertIn("⚡ Fast Start", labels)
+        self.assertIn("🎲 Random Boost: -15% HP Drain", labels)
         self.assertIn("▶️ Start", labels)
 
     @patch("controller.device_ensure_app_running")
@@ -629,7 +634,7 @@ class InlineBoardTests(unittest.TestCase):
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
              patch.object(controller, "answer_callback_query") as answer, \
-             patch.object(controller, "edit_message_text") as edit:
+             patch.object(controller, "edit_message_reply_markup") as edit:
             c._handle_callback(_callback("toggle:cr"))
 
         self.assertEqual(flags["cr"], "y")
@@ -638,9 +643,11 @@ class InlineBoardTests(unittest.TestCase):
         answer.assert_called_once_with("cb1")
         self.assertEqual(edit.call_args.args[0], 5)
         self.assertEqual(edit.call_args.args[1], 9)
-        labels = _button_labels(edit.call_args.kwargs["reply_markup"])
-        self.assertIn("🍪 Cookie Relay: ✅", labels)
-        self.assertIn("⚡ Fast Start: ❌", labels)
+        buttons = [b for row in edit.call_args.args[2]["inline_keyboard"] for b in row]
+        by_callback = {b["callback_data"]: b for b in buttons}
+        self.assertEqual(by_callback["toggle:cr"].get("style"), "primary")
+        self.assertNotIn("style", by_callback["toggle:fs"])
+        self.assertNotIn("style", by_callback["toggle:7j"])
 
     def test_rb_toggle_on_shows_picker_then_off_hides_it(self):
         c = controller.Controller()
@@ -648,16 +655,16 @@ class InlineBoardTests(unittest.TestCase):
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
              patch.object(controller, "answer_callback_query"), \
-             patch.object(controller, "edit_message_text") as edit:
+             patch.object(controller, "edit_message_reply_markup") as edit:
             c._handle_callback(_callback("toggle:rb"))
             self.assertEqual(flags["rb"], "1")
-            labels = _button_labels(edit.call_args.kwargs["reply_markup"])
-            self.assertIn("🎲 Random Boost: Double Coins ✅", labels)
+            labels = _button_labels(edit.call_args.args[2])
+            self.assertIn("🎲 Random Boost: Double Coins", labels)
             self.assertIn("✅ Double Coins", labels)
             c._handle_callback(_callback("toggle:rb", callback_id="cb2"))
             self.assertEqual(flags["rb"], "n")
-            labels = _button_labels(edit.call_args.kwargs["reply_markup"])
-            self.assertIn("🎲 Random Boost: ❌", labels)
+            labels = _button_labels(edit.call_args.args[2])
+            self.assertIn("🎲 Random Boost", labels)
             self.assertNotIn("✅ Double Coins", labels)
             self.assertNotIn("▫️ +15% Score Bonus", labels)
 
@@ -668,10 +675,10 @@ class InlineBoardTests(unittest.TestCase):
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
              patch.object(controller, "answer_callback_query"), \
-             patch.object(controller, "edit_message_text") as edit:
+             patch.object(controller, "edit_message_reply_markup") as edit:
             c._handle_callback(_callback("setrb:5"))
             self.assertEqual(flags["rb"], "5")
-            labels = _button_labels(edit.call_args.kwargs["reply_markup"])
+            labels = _button_labels(edit.call_args.args[2])
             self.assertIn("✅ 70% Crush Chance", labels)
             self.assertNotIn("✅ Double Coins", labels)
             c._handle_callback(_callback("setrb:99", callback_id="cb2"))
@@ -683,7 +690,7 @@ class InlineBoardTests(unittest.TestCase):
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
              patch.object(controller, "answer_callback_query") as answer, \
-             patch.object(controller, "edit_message_text") as edit, \
+             patch.object(controller, "edit_message_reply_markup") as edit, \
              patch.object(controller, "send_message") as send_message:
             c._handle_callback(_callback("toggle:fs", user_id=999))
             c._handle_callback(_callback("menu:status", user_id=999))

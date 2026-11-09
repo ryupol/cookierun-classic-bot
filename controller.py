@@ -132,13 +132,6 @@ def send_message(chat_id, text, timeout=10, parse_mode=None, reply_markup=None):
     return _api_post("sendMessage", body, timeout=timeout)
 
 
-def edit_message_text(chat_id, message_id, text, timeout=10, reply_markup=None):
-    body = {"chat_id": chat_id, "message_id": message_id, "text": text}
-    if reply_markup is not None:
-        body["reply_markup"] = reply_markup
-    return _api_post("editMessageText", body, timeout=timeout)
-
-
 def edit_message_reply_markup(chat_id, message_id, reply_markup, timeout=10):
     body = {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup}
     return _api_post("editMessageReplyMarkup", body, timeout=timeout)
@@ -314,26 +307,24 @@ def _flags_from_saved_or_default():
     return flags
 
 
-def _yn_mark(value):
-    return "✅" if value == "y" else "❌"
-
-
 def rb_label(value):
-    """Board label for the rb flag: off, or the full boost name."""
-    if value == "n":
-        return "❌"
+    """Board label suffix for the rb flag: the full boost name when on."""
     if value.isdigit() and 1 <= int(value) <= BOOST_COUNT:
-        return f"{BOOST_NAMES[int(value) - 1]} ✅"
-    return value
+        return f": {BOOST_NAMES[int(value) - 1]}"
+    return ""
 
 
 def board_text(flags):
-    return (
-        "🍪 Start options\n"
-        f"fs={flags['fs']}  cr={flags['cr']}  rb={flags['rb']} ({rb_label(flags['rb'])})  "
-        f"relic={flags['relic']}  7j={flags['7j']}\n"
-        "Tap a button to change it, then ▶️ Start."
-    )
+    # Static by design: per-tap refreshes edit only the button markup, so
+    # the message text never flickers. Button highlight carries the state.
+    return "🍪 Start options — highlighted = ON. Tap to change, then ▶️ Start."
+
+
+def _toggle_button(key, label, on):
+    button = {"text": label, "callback_data": f"toggle:{key}"}
+    if on:
+        button["style"] = "primary"  # highlighted = selected
+    return button
 
 
 def board_keyboard(flags):
@@ -344,14 +335,18 @@ def board_keyboard(flags):
         ("relic", "🏺 Relic"),
         ("7j", "🐇 7 Jumps"),
     ):
-        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}", "style": "primary"}])
-    rows.append([{"text": f"🎲 Random Boost: {rb_label(flags['rb'])}", "callback_data": "toggle:rb", "style": "primary"}])
+        rows.append([_toggle_button(key, label, flags[key] == "y")])
+    rows.append([_toggle_button("rb", f"🎲 Random Boost{rb_label(flags['rb'])}", flags["rb"] != "n")])
     if flags["rb"] != "n":
-        # Boost picker: radio-style, exactly one selected; bulleted so the
-        # rows read as a nested list under the main Random Boost button.
+        # Boost picker: radio-style, exactly one selected (highlighted);
+        # bulleted so the rows read as a nested list under Random Boost.
         for i, name in enumerate(BOOST_NAMES, 1):
-            mark = "✅ " if flags["rb"] == str(i) else "▫️ "
-            rows.append([{"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}])
+            selected = flags["rb"] == str(i)
+            mark = "✅ " if selected else "▫️ "
+            button = {"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}
+            if selected:
+                button["style"] = "primary"
+            rows.append([button])
     rows.append([{"text": "▶️ Start", "callback_data": "board:start", "style": "success"}])
     return {"inline_keyboard": rows}
 
@@ -754,11 +749,12 @@ class Controller:
         return board
 
     def _refresh_board(self, chat_id, board):
+        """Markup-only refresh: the board text is static, so a tap costs one
+        editMessageReplyMarkup instead of a full text rewrite."""
         message_id = board.get("message_id")
         if message_id is None:
             return
-        flags = board["flags"]
-        edit_message_text(chat_id, message_id, board_text(flags), reply_markup=board_keyboard(flags))
+        edit_message_reply_markup(chat_id, message_id, board_keyboard(board["flags"]))
 
     def _toggle_board_flag(self, chat_id, message_id, key):
         if key not in DEFAULT_FLAGS or key == "rb":
