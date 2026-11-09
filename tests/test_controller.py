@@ -530,16 +530,23 @@ class InlineBoardTests(unittest.TestCase):
     def test_board_keyboard_labels(self):
         flags = {"fs": "y", "cr": "n", "rb": "3", "relic": "n", "7j": "y"}
         labels = _button_labels(controller.board_keyboard(flags))
-        self.assertEqual(labels[0], "⚡ Fast Start: ✅")
-        self.assertEqual(labels[1], "🍪 Cookie Relay: ❌")
-        self.assertEqual(labels[2], "🎲 Random Boost: -15% HP Drain ✅")
-        # Boost picker: 11 named buttons, exactly one marked.
-        picker = labels[3:14]
+        self.assertEqual(
+            labels[:5],
+            [
+                "⚡ Fast Start: ✅",
+                "🍪 Cookie Relay: ❌",
+                "🏺 Relic: ❌",
+                "🐇 7 Jumps: ✅",
+                "🎲 Random Boost: -15% HP Drain ✅",
+            ],
+        )
+        # Boost picker: 11 named buttons (no numbers), exactly one marked.
+        picker = labels[5:16]
         self.assertEqual(len(picker), controller.BOOST_COUNT)
-        self.assertEqual(picker[2], "✅ 3. -15% HP Drain")
-        self.assertEqual(picker[0], "1. Double Coins")
+        self.assertEqual(picker[2], "✅ -15% HP Drain")
+        self.assertEqual(picker[0], "Double Coins")
         self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
-        self.assertEqual(labels[14:], ["🏺 Relic: ❌", "🐇 7 Jumps: ✅", "▶️ Start"])
+        self.assertEqual(labels[16:], ["▶️ Start"])
 
     def test_board_keyboard_hides_picker_when_rb_off(self):
         flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
@@ -549,9 +556,9 @@ class InlineBoardTests(unittest.TestCase):
             [
                 "⚡ Fast Start: ❌",
                 "🍪 Cookie Relay: ❌",
-                "🎲 Random Boost: ❌",
                 "🏺 Relic: ❌",
                 "🐇 7 Jumps: ❌",
+                "🎲 Random Boost: ❌",
                 "▶️ Start",
             ],
         )
@@ -635,13 +642,13 @@ class InlineBoardTests(unittest.TestCase):
             self.assertEqual(flags["rb"], "1")
             labels = _button_labels(edit.call_args.kwargs["reply_markup"])
             self.assertIn("🎲 Random Boost: Double Coins ✅", labels)
-            self.assertIn("✅ 1. Double Coins", labels)
+            self.assertIn("✅ Double Coins", labels)
             c._handle_callback(_callback("toggle:rb", callback_id="cb2"))
             self.assertEqual(flags["rb"], "n")
             labels = _button_labels(edit.call_args.kwargs["reply_markup"])
             self.assertIn("🎲 Random Boost: ❌", labels)
-            self.assertNotIn("✅ 1. Double Coins", labels)
-            self.assertNotIn("2. +15% Score Bonus", labels)
+            self.assertNotIn("✅ Double Coins", labels)
+            self.assertNotIn("+15% Score Bonus", labels)
 
     def test_setrb_selects_exactly_one_boost(self):
         c = controller.Controller()
@@ -654,8 +661,8 @@ class InlineBoardTests(unittest.TestCase):
             c._handle_callback(_callback("setrb:5"))
             self.assertEqual(flags["rb"], "5")
             labels = _button_labels(edit.call_args.kwargs["reply_markup"])
-            self.assertIn("✅ 5. 70% Crush Chance", labels)
-            self.assertNotIn("✅ 1. Double Coins", labels)
+            self.assertIn("✅ 70% Crush Chance", labels)
+            self.assertNotIn("✅ Double Coins", labels)
             c._handle_callback(_callback("setrb:99", callback_id="cb2"))
             self.assertEqual(flags["rb"], "5")
 

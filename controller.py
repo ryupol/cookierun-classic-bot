@@ -338,16 +338,19 @@ def board_text(flags):
 
 def board_keyboard(flags):
     rows = []
-    for key, label in (("fs", "⚡ Fast Start"), ("cr", "🍪 Cookie Relay")):
+    for key, label in (
+        ("fs", "⚡ Fast Start"),
+        ("cr", "🍪 Cookie Relay"),
+        ("relic", "🏺 Relic"),
+        ("7j", "🐇 7 Jumps"),
+    ):
         rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
     rows.append([{"text": f"🎲 Random Boost: {rb_label(flags['rb'])}", "callback_data": "toggle:rb"}])
     if flags["rb"] != "n":
         # Boost picker: radio-style, exactly one selected.
         for i, name in enumerate(BOOST_NAMES, 1):
             mark = "✅ " if flags["rb"] == str(i) else ""
-            rows.append([{"text": f"{mark}{i}. {name}", "callback_data": f"setrb:{i}"}])
-    for key, label in (("relic", "🏺 Relic"), ("7j", "🐇 7 Jumps")):
-        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
+            rows.append([{"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}])
     rows.append([{"text": "▶️ Start", "callback_data": "board:start"}])
     return {"inline_keyboard": rows}
 
