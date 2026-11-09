@@ -33,16 +33,23 @@ class SendCodeMessageTests(unittest.TestCase):
 
 class FlagParsingTests(unittest.TestCase):
     def test_flags_to_answers_with_boost(self):
-        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n"}
-        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n"])
+        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "n"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n", "n"])
 
     def test_flags_to_answers_without_boost(self):
-        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n"}
-        self.assertEqual(controller.flags_to_answers(flags), ["n", "n", "n", "n"])
+        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
+        self.assertEqual(controller.flags_to_answers(flags), ["n", "n", "n", "n", "n"])
+
+    def test_flags_to_answers_appends_7j_last(self):
+        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "y"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n", "y"])
+        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y", "7j": "y"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "n", "n", "y", "y"])
+        self.assertEqual(controller.flags_to_answers(flags)[-1], "y")
 
     def test_flags_to_stdin_ends_with_newline_per_answer(self):
-        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
-        self.assertEqual(controller.flags_to_stdin(flags), "y\nn\nn\ny\n")
+        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y", "7j": "n"}
+        self.assertEqual(controller.flags_to_stdin(flags), "y\nn\nn\ny\nn\n")
 
     def test_parse_start_args_overrides_base(self):
         base = dict(controller.DEFAULT_FLAGS)
@@ -57,6 +64,12 @@ class FlagParsingTests(unittest.TestCase):
         self.assertEqual(flags["fs"], "y")
         self.assertEqual(flags["relic"], "n")
 
+    def test_parse_start_args_accepts_7j(self):
+        base = dict(controller.DEFAULT_FLAGS)
+        flags = controller.parse_start_args("7j=y", base)
+        self.assertEqual(flags["7j"], "y")
+        self.assertEqual(flags["fs"], "n")
+
     def test_parse_start_args_rejects_unknown_flag(self):
         base = dict(controller.DEFAULT_FLAGS)
         with self.assertRaises(ValueError):
@@ -67,8 +80,22 @@ class FlagParsingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.parse_start_args("fs", base)
 
+    def test_default_7j_is_n(self):
+        self.assertEqual(controller.DEFAULT_FLAGS["7j"], "n")
+
     def test_validate_flags_accepts_defaults(self):
         controller.validate_flags(dict(controller.DEFAULT_FLAGS))  # no raise
+
+    def test_validate_flags_accepts_7j_yes(self):
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["7j"] = "y"
+        controller.validate_flags(flags)  # no raise
+
+    def test_validate_flags_rejects_bad_7j(self):
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["7j"] = "maybe"
+        with self.assertRaises(ValueError):
+            controller.validate_flags(flags)
 
     def test_validate_flags_rejects_bad_yn(self):
         flags = dict(controller.DEFAULT_FLAGS)
@@ -171,16 +198,19 @@ class FormatDurationTests(unittest.TestCase):
 class AuthorizationTests(unittest.TestCase):
     def test_is_authorized_true_for_allowed_id(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111, 222}):
             self.assertTrue(c.is_authorized(111))
 
     def test_is_authorized_false_for_unknown_id(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111, 222}):
             self.assertFalse(c.is_authorized(999))
 
     def test_is_authorized_false_when_allowlist_empty(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", set()):
             self.assertFalse(c.is_authorized(111))
 
@@ -211,6 +241,7 @@ class DrainBacklogTests(unittest.TestCase):
     def test_handles_none_without_raising(self, get_updates):
         get_updates.return_value = None
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c._drain_backlog()  # should not raise
         self.assertEqual(c.offset, 0)
 
@@ -218,6 +249,7 @@ class DrainBacklogTests(unittest.TestCase):
     def test_advances_offset_past_drained_updates(self, get_updates):
         get_updates.return_value = [{"update_id": 5}, {"update_id": 7}]
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c._drain_backlog()
         self.assertEqual(c.offset, 8)
 
@@ -256,6 +288,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
         call_order = []
         ensure_running.side_effect = lambda *a, **k: call_order.append("launch_app")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 4242
@@ -274,10 +307,11 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
     def test_does_not_start_bot_when_app_launch_fails(self, send_message, ensure_running):
         ensure_running.side_effect = RuntimeError("app never came up")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
 
-        controller.cmd_start(c, 123, "")
+        controller.cmd_start(c, 123, "fs=n")
 
         c.bot.start.assert_not_called()
         self.assertTrue(
@@ -288,6 +322,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_skips_app_launch_when_bot_already_running(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = True
 
@@ -302,6 +337,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_closes_app_after_process_exits(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         # is_running: True on the initial guard check, then False once the
         # process has exited (simulates SIGINT taking effect quickly).
@@ -318,6 +354,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_noop_when_not_running(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
 
@@ -330,6 +367,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_kill_closes_app(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
 
@@ -345,6 +383,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     def test_app_close_failure_reports_but_does_not_raise(self, send_message, force_stop):
         force_stop.side_effect = Exception("adb offline")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
 
@@ -358,6 +397,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_stop(c, 123, "")
@@ -371,6 +411,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_from_paused_can_retry_app_close(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_stop(c, 123, "")
@@ -381,6 +422,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_kill_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_kill(c, 123, "")
@@ -394,6 +436,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_pause_waits_for_exit_and_leaves_game_open(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
         c.bot.proc.poll.return_value = 0
@@ -412,6 +455,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_slow_exit_stays_pausing_until_child_exits(self, send_message, wait_for_exit):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = True
         c.bot.proc.poll.side_effect = [None, 0]
@@ -435,6 +479,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_start_rejected_while_pausing(self, send_message):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.pause_pending = True
 
@@ -447,35 +492,354 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_start_from_paused_reuses_last_flags(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 4242
         c.paused = True
         flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
         with patch.object(controller, "_load_last_start", return_value=flags):
-            controller.cmd_start(c, 123, "")
+            controller.cmd_start(c, 123, "cr=y")
 
-        c.bot.start.assert_called_once_with(flags)
+        c.bot.start.assert_called_once_with(
+            {"fs": "y", "cr": "y", "rb": "n", "relic": "y", "7j": "n"}
+        )
         self.assertFalse(c.paused)
 
     @patch("controller.device_ensure_app_running", side_effect=RuntimeError("adb offline"))
     @patch.object(controller, "send_message")
     def test_failed_start_leaves_paused_state(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
-        controller.cmd_start(c, 123, "")
+        controller.cmd_start(c, 123, "fs=n")
 
         self.assertTrue(c.paused)
 
     @patch.object(controller, "send_message")
     def test_status_reports_paused(self, send_message):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_status(c, 123, "")
 
         self.assertIn("PAUSED", send_message.call_args.args[1])
+
+
+def _callback(data, user_id=111, chat_id=5, message_id=9, callback_id="cb1"):
+    return {
+        "id": callback_id,
+        "from": {"id": user_id},
+        "data": data,
+        "message": {"message_id": message_id, "chat": {"id": chat_id}},
+    }
+
+
+def _button_labels(markup):
+    return [button["text"] for row in markup["inline_keyboard"] for button in row]
+
+
+class InlineBoardTests(unittest.TestCase):
+    def test_help_guide_and_usage_document_7j_and_menu(self):
+        self.assertIn("7j=y|n", controller.HELP_TEXT)
+        self.assertIn("7j=y|n", controller.GUIDE_TEXT)
+        self.assertIn("7j=y|n", controller._START_USAGE)
+        self.assertIn("/menu", controller.HELP_TEXT)
+
+    def test_board_keyboard_labels(self):
+        flags = {"fs": "y", "cr": "n", "rb": "3", "relic": "n", "7j": "y"}
+        labels = _button_labels(controller.board_keyboard(flags))
+        self.assertEqual(
+            labels[:5],
+            [
+                "⚡ Fast Start",
+                "🍪 Cookie Relay",
+                "🏺 Relic",
+                "🐇 7 Jumps",
+                "🎲 Random Boost: -15% HP Drain",
+            ],
+        )
+        # Boost picker: 11 named buttons (no numbers), exactly one marked.
+        picker = labels[5:16]
+        self.assertEqual(len(picker), controller.BOOST_COUNT)
+        self.assertEqual(picker[2], "✅ -15% HP Drain")
+        self.assertEqual(picker[0], "▫️ Double Coins")
+        self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
+        self.assertEqual(labels[16:], ["▶️ Start"])
+
+    def test_flags_summary_is_human_readable(self):
+        flags = {"fs": "y", "cr": "n", "rb": "1", "relic": "n", "7j": "y"}
+        text = controller.flags_summary(flags)
+        self.assertIn("⚡ Fast Start ✅", text)
+        self.assertIn("🍪 Cookie Relay ❌", text)
+        self.assertIn("🏺 Relic ❌", text)
+        self.assertIn("🐇 7 Jumps ✅", text)
+        self.assertIn("🎲 Random Boost: Double Coins ✅", text)
+        self.assertNotIn("fs=", text)
+        flags["rb"] = "n"
+        self.assertIn("🎲 Random Boost ❌", controller.flags_summary(flags))
+
+    def test_board_packs_two_buttons_per_row(self):
+        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
+        rows = controller.board_keyboard(flags)["inline_keyboard"]
+        self.assertEqual([len(r) for r in rows], [2, 2, 1, 1])
+        flags["rb"] = "1"
+        rows = controller.board_keyboard(flags)["inline_keyboard"]
+        self.assertEqual([len(r) for r in rows], [2, 2, 1] + [2] * 5 + [1, 1])
+
+    def test_board_button_styles_mean_highlight_is_on(self):
+        flags = {"fs": "y", "cr": "n", "rb": "1", "relic": "n", "7j": "y"}
+        buttons = [b for row in controller.board_keyboard(flags)["inline_keyboard"] for b in row]
+        by_callback = {b["callback_data"]: b for b in buttons}
+        # ON options are highlighted, OFF options stay plain.
+        for key in ("fs", "7j"):
+            self.assertEqual(by_callback[f"toggle:{key}"].get("style"), "primary")
+        for key in ("cr", "relic"):
+            self.assertNotIn("style", by_callback[f"toggle:{key}"])
+        self.assertEqual(by_callback["toggle:rb"].get("style"), "primary")
+        self.assertEqual(by_callback["board:start"].get("style"), "success")
+        # Picker: only the selected boost is highlighted.
+        self.assertEqual(by_callback["setrb:1"].get("style"), "primary")
+        for i in range(2, controller.BOOST_COUNT + 1):
+            self.assertNotIn("style", by_callback[f"setrb:{i}"])
+
+    def test_board_keyboard_hides_picker_when_rb_off(self):
+        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
+        labels = _button_labels(controller.board_keyboard(flags))
+        self.assertEqual(
+            labels,
+            [
+                "⚡ Fast Start",
+                "🍪 Cookie Relay",
+                "🏺 Relic",
+                "🐇 7 Jumps",
+                "🎲 Random Boost",
+                "▶️ Start",
+            ],
+        )
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_bare_start_shows_board_and_does_not_launch(self, send_message, ensure_running):
+        send_message.return_value = {"ok": True, "result": {"message_id": 42}}
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.paused = True
+        saved = {"fs": "y", "cr": "n", "rb": "3", "relic": "y"}
+        with patch.object(controller, "_load_last_start", return_value=saved):
+            controller.cmd_start(c, 123, "")
+
+        ensure_running.assert_not_called()
+        c.bot.start.assert_not_called()
+        self.assertTrue(c.paused)
+        self.assertEqual(c.boards[123]["message_id"], 42)
+        self.assertEqual(c.boards[123]["flags"]["fs"], "y")
+        self.assertEqual(c.boards[123]["flags"]["rb"], "3")
+        self.assertEqual(c.boards[123]["flags"]["7j"], "n")
+        labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
+        self.assertIn("⚡ Fast Start", labels)
+        self.assertIn("🎲 Random Boost: -15% HP Drain", labels)
+        self.assertIn("▶️ Start", labels)
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_typed_flags_still_start_immediately(self, send_message, ensure_running):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+
+        controller.cmd_start(c, 123, "fs=y cr=y rb=1 relic=n 7j=y")
+
+        ensure_running.assert_called_once()
+        c.bot.start.assert_called_once_with(
+            {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "y"}
+        )
+        self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
+        self.assertFalse(any(call.kwargs.get("reply_markup") for call in send_message.call_args_list))
+
+    def test_dispatch_update_routes_callback_query(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        payload = {"id": "1"}
+        with patch.object(c, "_handle_callback") as handle_cb, patch.object(c, "_handle_message") as handle_msg:
+            c._dispatch_update({"callback_query": payload})
+        handle_cb.assert_called_once_with(payload)
+        handle_msg.assert_not_called()
+
+    def test_callback_toggle_flips_only_that_flag(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        flags = dict(controller.DEFAULT_FLAGS)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query") as answer, \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            c._handle_callback(_callback("toggle:cr"))
+
+        self.assertEqual(flags["cr"], "y")
+        self.assertEqual(flags["fs"], "n")
+        self.assertEqual(flags["7j"], "n")
+        answer.assert_called_once_with("cb1")
+        self.assertEqual(edit.call_args.args[0], 5)
+        self.assertEqual(edit.call_args.args[1], 9)
+        buttons = [b for row in edit.call_args.args[2]["inline_keyboard"] for b in row]
+        by_callback = {b["callback_data"]: b for b in buttons}
+        self.assertEqual(by_callback["toggle:cr"].get("style"), "primary")
+        self.assertNotIn("style", by_callback["toggle:fs"])
+        self.assertNotIn("style", by_callback["toggle:7j"])
+
+    def test_rb_toggle_on_shows_picker_then_off_hides_it(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        flags = dict(controller.DEFAULT_FLAGS)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            c._handle_callback(_callback("toggle:rb"))
+            self.assertEqual(flags["rb"], "1")
+            labels = _button_labels(edit.call_args.args[2])
+            self.assertIn("🎲 Random Boost: Double Coins", labels)
+            self.assertIn("✅ Double Coins", labels)
+            c._handle_callback(_callback("toggle:rb", callback_id="cb2"))
+            self.assertEqual(flags["rb"], "n")
+            labels = _button_labels(edit.call_args.args[2])
+            self.assertIn("🎲 Random Boost", labels)
+            self.assertNotIn("✅ Double Coins", labels)
+            self.assertNotIn("▫️ +15% Score Bonus", labels)
+
+    def test_setrb_selects_exactly_one_boost(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["rb"] = "1"
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            c._handle_callback(_callback("setrb:5"))
+            self.assertEqual(flags["rb"], "5")
+            labels = _button_labels(edit.call_args.args[2])
+            self.assertIn("✅ 70% Crush Chance", labels)
+            self.assertNotIn("✅ Double Coins", labels)
+            c._handle_callback(_callback("setrb:99", callback_id="cb2"))
+            self.assertEqual(flags["rb"], "5")
+
+    def test_unauthorized_callback_is_ignored(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        flags = dict(controller.DEFAULT_FLAGS)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query") as answer, \
+             patch.object(controller, "edit_message_reply_markup") as edit, \
+             patch.object(controller, "send_message") as send_message:
+            c._handle_callback(_callback("toggle:fs", user_id=999))
+            c._handle_callback(_callback("menu:status", user_id=999))
+            c._handle_callback(_callback("board:start", user_id=999))
+
+        answer.assert_not_called()
+        edit.assert_not_called()
+        send_message.assert_not_called()
+        self.assertEqual(flags["fs"], "n")
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "edit_message_reply_markup")
+    @patch.object(controller, "answer_callback_query")
+    @patch.object(controller, "send_message")
+    def test_start_button_launches_with_board_flags(self, send_message, answer, edit, ensure_running):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 7
+        flags = {"fs": "y", "cr": "n", "rb": "2", "relic": "y", "7j": "y"}
+        c.boards[5] = {"message_id": 9, "flags": dict(flags)}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}):
+            c._handle_callback(_callback("board:start"))
+
+        ensure_running.assert_called_once()
+        c.bot.start.assert_called_once_with(flags)
+        answer.assert_called_once_with("cb1")
+        self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
+        # Board consumed: keyboard stripped, state dropped, message retired.
+        edit.assert_called_once_with(5, 9, {"inline_keyboard": []})
+        self.assertEqual(c.boards, {})
+        self.assertIn((5, 9), c._retired_board_messages)
+
+    def test_new_board_retires_previous_board(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.boards[5] = {"message_id": 9, "flags": dict(controller.DEFAULT_FLAGS)}
+        with patch.object(controller, "send_message") as send_message, \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            send_message.return_value = {"ok": True, "result": {"message_id": 10}}
+            c.show_start_board(5, dict(controller.DEFAULT_FLAGS))
+
+        edit.assert_called_once_with(5, 9, {"inline_keyboard": []})
+        self.assertEqual(c.boards[5]["message_id"], 10)
+        self.assertIn((5, 9), c._retired_board_messages)
+
+    def test_late_tap_on_retired_board_is_ignored(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c._retired_board_messages.add((5, 9))
+        c.boards[5] = {"message_id": 10, "flags": dict(controller.DEFAULT_FLAGS)}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            c._handle_callback(_callback("toggle:fs"))  # _callback's message_id
+
+        edit.assert_not_called()
+        self.assertEqual(c.boards[5]["flags"]["fs"], "n")
+        self.assertEqual(c.boards[5]["message_id"], 10)
+
+    @patch.object(controller, "send_message")
+    def test_menu_command_sends_command_buttons(self, send_message):
+        controller.cmd_menu(controller.Controller(), 123, "")
+        labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
+        self.assertEqual(labels, ["📊 Status", "📋 Logs", "📸 Screenshot", "⏸️ Pause", "🛑 Stop"])
+
+    @patch("controller.device_force_stop_app")
+    @patch("controller.capture_screenshot_bytes", return_value=b"png")
+    @patch("controller.send_photo")
+    @patch("controller._tail_log", return_value=["hello"])
+    @patch.object(controller, "send_message")
+    @patch.object(controller, "answer_callback_query")
+    def test_menu_callbacks_run_existing_commands(
+        self, answer, send_message, tail, send_photo, capture, force_stop
+    ):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}):
+            c._handle_callback(_callback("menu:status"))
+            self.assertTrue(any("STOPPED" in call.args[1] for call in send_message.call_args_list))
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:logs", callback_id="logs"))
+            tail.assert_called_with(30)
+            self.assertTrue(any("hello" in call.args[1] for call in send_message.call_args_list))
+
+            c._handle_callback(_callback("menu:screenshot", callback_id="shot"))
+            capture.assert_called_once()
+            send_photo.assert_called_once()
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:pause", callback_id="pause"))
+            self.assertTrue(any("not running" in call.args[1] for call in send_message.call_args_list))
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:stop", callback_id="stop"))
+            self.assertTrue(any("not running" in call.args[1] for call in send_message.call_args_list))
+
+        force_stop.assert_not_called()
+        self.assertEqual(answer.call_count, 5)
 
 
 if __name__ == "__main__":

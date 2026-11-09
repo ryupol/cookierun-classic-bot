@@ -12,7 +12,7 @@ DEVICE_PORT = 5555           # Change to your adb device's port number
 TEMPLATE_DIR = "templates"
 MATCH_THRESHOLD = 0.8
 SESSION_RESET_INTERVAL = (5400, 10800)  # 1.5-3 hours
-LIVES_INTERVAL = (25 * 60, 35 * 60)  # 25-35 minutes
+LIVES_INTERVAL = (3 * 3600, 6 * 3600)  # 3-6 hours
 SEND_LIFE_CONFIRM_TIMEOUT = 5.0
 SEND_LIFE_SENT_TIMEOUT = 8.0
 SEND_LIFE_MAX_DURATION = 120.0  # give up the whole send-life flow after this many seconds
@@ -46,7 +46,19 @@ TELEGRAM_ALLOWED_USER_IDS = {
 # -------------------
 # STAGE DETECTION TEMPLATES
 # -------------------
-STAGE_MAINMENU_TEMPLATE = ["MAINMENU_1.png"]
+# MAINMENU_2/3 ("League Results" header) and MAINMENU_4 ("Previous Rank
+# Results" header) are intentionally detected as MAINMENU per user decision —
+# those result screens are treated as the lobby in the current game patch.
+# NOTE: these crops score ~0.4 on real 1280x720 emulator frames (different
+# source scale) so they effectively never match; working templates need
+# re-cropping from real frames of those screens (tracked in
+# tmp/checkpoint/bot-qol-improvements/state.md).
+STAGE_MAINMENU_TEMPLATE = [
+    "MAINMENU_1.png",
+    "MAINMENU_2.png",
+    "MAINMENU_3.png",
+    "MAINMENU_4.png",
+]
 STAGE_PURCHASE_ITEM_TEMPLATE = ["PURCHASE_ITEM_1.png"]
 STAGE_GAME_START_TEMPLATE = ["GAME_START_1.png"]
 STAGE_GAME_RELAY_TEMPLATE = ["GAME_RELAY_1.png"]
@@ -77,7 +89,10 @@ STAGE_GAME_SETTINGS_TEMPLATE = ["GAME_SETTINGS_1.png"]
 # STAGE DETECTION REGIONS
 # -------------------
 # Format: (x1, y1, x2, y2)
-STAGE_MAINMENU_REGION = (154, 150, 344, 225)
+# Union of the lobby top-left area and the top-center header strip, so the
+# League/Previous Rank Results header templates (MAINMENU_2-6) can match.
+# Top is y=10: the real "League Results" titles render at y=18-80.
+STAGE_MAINMENU_REGION = (154, 10, 832, 225)
 STAGE_PURCHASE_ITEM_REGION = (474, 84, 602, 138)
 STAGE_GAME_START_REGION = (573, 265, 733, 427)
 STAGE_GAME_RELAY_REGION = (573, 265, 733, 427)
@@ -284,6 +299,7 @@ DETECTION_RECOVERY_SCAN_INTERVAL = {
 # -------------------
 START_BUTTON = (955, 650)
 PLAY_BUTTON = (895, 620)
+JUMP_BUTTON = (150, 620)  # center of the left (up-arrow) Jump button; confirmed via live screenshot 2026-11-09
 FAST_START_ITEM = (235, 600)
 COOKIE_RELAY_ITEM = (385, 600)
 RANDOM_BOOST_ITEM = (535, 600)
