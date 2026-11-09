@@ -198,16 +198,19 @@ class FormatDurationTests(unittest.TestCase):
 class AuthorizationTests(unittest.TestCase):
     def test_is_authorized_true_for_allowed_id(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111, 222}):
             self.assertTrue(c.is_authorized(111))
 
     def test_is_authorized_false_for_unknown_id(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111, 222}):
             self.assertFalse(c.is_authorized(999))
 
     def test_is_authorized_false_when_allowlist_empty(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", set()):
             self.assertFalse(c.is_authorized(111))
 
@@ -238,6 +241,7 @@ class DrainBacklogTests(unittest.TestCase):
     def test_handles_none_without_raising(self, get_updates):
         get_updates.return_value = None
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c._drain_backlog()  # should not raise
         self.assertEqual(c.offset, 0)
 
@@ -245,6 +249,7 @@ class DrainBacklogTests(unittest.TestCase):
     def test_advances_offset_past_drained_updates(self, get_updates):
         get_updates.return_value = [{"update_id": 5}, {"update_id": 7}]
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c._drain_backlog()
         self.assertEqual(c.offset, 8)
 
@@ -283,6 +288,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
         call_order = []
         ensure_running.side_effect = lambda *a, **k: call_order.append("launch_app")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 4242
@@ -301,6 +307,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
     def test_does_not_start_bot_when_app_launch_fails(self, send_message, ensure_running):
         ensure_running.side_effect = RuntimeError("app never came up")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
 
@@ -315,6 +322,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_skips_app_launch_when_bot_already_running(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = True
 
@@ -329,6 +337,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_closes_app_after_process_exits(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         # is_running: True on the initial guard check, then False once the
         # process has exited (simulates SIGINT taking effect quickly).
@@ -345,6 +354,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_noop_when_not_running(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
 
@@ -357,6 +367,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_kill_closes_app(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
 
@@ -372,6 +383,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     def test_app_close_failure_reports_but_does_not_raise(self, send_message, force_stop):
         force_stop.side_effect = Exception("adb offline")
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
 
@@ -385,6 +397,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_stop(c, 123, "")
@@ -398,6 +411,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_stop_from_paused_can_retry_app_close(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_stop(c, 123, "")
@@ -408,6 +422,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_kill_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_kill(c, 123, "")
@@ -421,6 +436,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_pause_waits_for_exit_and_leaves_game_open(self, send_message, force_stop):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.side_effect = [True, False]
         c.bot.proc.poll.return_value = 0
@@ -439,6 +455,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_slow_exit_stays_pausing_until_child_exits(self, send_message, wait_for_exit):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = True
         c.bot.proc.poll.side_effect = [None, 0]
@@ -462,6 +479,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_start_rejected_while_pausing(self, send_message):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.pause_pending = True
 
@@ -474,6 +492,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_start_from_paused_reuses_last_flags(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 4242
@@ -491,6 +510,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_failed_start_leaves_paused_state(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_start(c, 123, "fs=n")
@@ -500,6 +520,7 @@ class CmdPauseTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_status_reports_paused(self, send_message):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.paused = True
 
         controller.cmd_status(c, 123, "")
@@ -548,6 +569,14 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
         self.assertEqual(labels[16:], ["▶️ Start"])
 
+    def test_board_packs_two_buttons_per_row(self):
+        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
+        rows = controller.board_keyboard(flags)["inline_keyboard"]
+        self.assertEqual([len(r) for r in rows], [2, 2, 1, 1])
+        flags["rb"] = "1"
+        rows = controller.board_keyboard(flags)["inline_keyboard"]
+        self.assertEqual([len(r) for r in rows], [2, 2, 1] + [2] * 5 + [1, 1])
+
     def test_board_button_styles_mean_highlight_is_on(self):
         flags = {"fs": "y", "cr": "n", "rb": "1", "relic": "n", "7j": "y"}
         buttons = [b for row in controller.board_keyboard(flags)["inline_keyboard"] for b in row]
@@ -584,6 +613,7 @@ class InlineBoardTests(unittest.TestCase):
     def test_bare_start_shows_board_and_does_not_launch(self, send_message, ensure_running):
         send_message.return_value = {"ok": True, "result": {"message_id": 42}}
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.paused = True
@@ -607,6 +637,7 @@ class InlineBoardTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_typed_flags_still_start_immediately(self, send_message, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 9
@@ -622,6 +653,7 @@ class InlineBoardTests(unittest.TestCase):
 
     def test_dispatch_update_routes_callback_query(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         payload = {"id": "1"}
         with patch.object(c, "_handle_callback") as handle_cb, patch.object(c, "_handle_message") as handle_msg:
             c._dispatch_update({"callback_query": payload})
@@ -630,6 +662,7 @@ class InlineBoardTests(unittest.TestCase):
 
     def test_callback_toggle_flips_only_that_flag(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         flags = dict(controller.DEFAULT_FLAGS)
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
@@ -651,6 +684,7 @@ class InlineBoardTests(unittest.TestCase):
 
     def test_rb_toggle_on_shows_picker_then_off_hides_it(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         flags = dict(controller.DEFAULT_FLAGS)
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
@@ -670,6 +704,7 @@ class InlineBoardTests(unittest.TestCase):
 
     def test_setrb_selects_exactly_one_boost(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         flags = dict(controller.DEFAULT_FLAGS)
         flags["rb"] = "1"
         c.boards[5] = {"message_id": 9, "flags": flags}
@@ -686,6 +721,7 @@ class InlineBoardTests(unittest.TestCase):
 
     def test_unauthorized_callback_is_ignored(self):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         flags = dict(controller.DEFAULT_FLAGS)
         c.boards[5] = {"message_id": 9, "flags": flags}
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
@@ -706,6 +742,7 @@ class InlineBoardTests(unittest.TestCase):
     @patch.object(controller, "send_message")
     def test_start_button_launches_with_board_flags(self, send_message, answer, ensure_running):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
         c.bot.proc.pid = 7
@@ -735,6 +772,7 @@ class InlineBoardTests(unittest.TestCase):
         self, answer, send_message, tail, send_photo, capture, force_stop
     ):
         c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
         with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}):
             c._handle_callback(_callback("menu:status"))
             self.assertTrue(any("STOPPED" in call.args[1] for call in send_message.call_args_list))

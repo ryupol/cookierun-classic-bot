@@ -60,6 +60,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -327,26 +328,35 @@ def _toggle_button(key, label, on):
     return button
 
 
+def _pack(buttons, per_row=2):
+    """Group buttons `per_row` per keyboard row so they render narrower."""
+    return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+
+
 def board_keyboard(flags):
-    rows = []
-    for key, label in (
-        ("fs", "⚡ Fast Start"),
-        ("cr", "🍪 Cookie Relay"),
-        ("relic", "🏺 Relic"),
-        ("7j", "🐇 7 Jumps"),
-    ):
-        rows.append([_toggle_button(key, label, flags[key] == "y")])
+    toggles = [
+        _toggle_button(key, label, flags[key] == "y")
+        for key, label in (
+            ("fs", "⚡ Fast Start"),
+            ("cr", "🍪 Cookie Relay"),
+            ("relic", "🏺 Relic"),
+            ("7j", "🐇 7 Jumps"),
+        )
+    ]
+    rows = _pack(toggles)
     rows.append([_toggle_button("rb", f"🎲 Random Boost{rb_label(flags['rb'])}", flags["rb"] != "n")])
     if flags["rb"] != "n":
         # Boost picker: radio-style, exactly one selected (highlighted);
         # bulleted so the rows read as a nested list under Random Boost.
+        picker = []
         for i, name in enumerate(BOOST_NAMES, 1):
             selected = flags["rb"] == str(i)
             mark = "✅ " if selected else "▫️ "
             button = {"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}
             if selected:
                 button["style"] = "primary"
-            rows.append([button])
+            picker.append(button)
+        rows += _pack(picker)
     rows.append([{"text": "▶️ Start", "callback_data": "board:start", "style": "success"}])
     return {"inline_keyboard": rows}
 
@@ -730,6 +740,10 @@ class Controller:
         # chat_id -> {"message_id": int | None, "flags": dict}
         # In memory only. Restarting the controller resets the board.
         self.boards = {}
+        # Callbacks are answered/refreshed off the polling loop (see
+        # _handle_callback). Tests flip this off to run them synchronously.
+        self._async_callbacks = True
+        self._callback_lock = threading.Lock()
 
     def show_start_board(self, chat_id, flags):
         flags = {key: flags.get(key, DEFAULT_FLAGS[key]) for key in DEFAULT_FLAGS}
@@ -801,23 +815,35 @@ class Controller:
         message = callback.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id")
         callback_id = callback.get("id")
-        if callback_id:
-            answer_callback_query(callback_id)
         if chat_id is None:
             return
-        self._check_child_exit()
-        self.last_chat_id = chat_id
-        message_id = message.get("message_id")
-        if data == "toggle:rb":
-            self._toggle_board_rb(chat_id, message_id)
-        elif data.startswith("toggle:"):
-            self._toggle_board_flag(chat_id, message_id, data.split(":", 1)[1])
-        elif data.startswith("setrb:"):
-            self._set_board_rb(chat_id, message_id, data.split(":", 1)[1])
-        elif data == "board:start":
-            self._start_from_board(chat_id)
-        elif data.startswith("menu:"):
-            self._dispatch_menu(chat_id, data.split(":", 1)[1])
+        # Telegram API round trips measured at ~0.85s each from this host, so
+        # doing answer+edit inline made every tap feel ~2s. Fire both off the
+        # polling loop: the answer in its own thread (clears the button
+        # spinner), the state change + board refresh in another.
+        if callback_id:
+            threading.Thread(target=answer_callback_query, args=(callback_id,), daemon=True).start()
+        args = (chat_id, message.get("message_id"), data)
+        if self._async_callbacks:
+            threading.Thread(target=self._run_callback, args=args, daemon=True).start()
+        else:
+            self._run_callback(*args)
+
+    def _run_callback(self, chat_id, message_id, data):
+        # Serialized: taps are infrequent, and ▶️ Start vs /start must never race.
+        with self._callback_lock:
+            self._check_child_exit()
+            self.last_chat_id = chat_id
+            if data == "toggle:rb":
+                self._toggle_board_rb(chat_id, message_id)
+            elif data.startswith("toggle:"):
+                self._toggle_board_flag(chat_id, message_id, data.split(":", 1)[1])
+            elif data.startswith("setrb:"):
+                self._set_board_rb(chat_id, message_id, data.split(":", 1)[1])
+            elif data == "board:start":
+                self._start_from_board(chat_id)
+            elif data.startswith("menu:"):
+                self._dispatch_menu(chat_id, data.split(":", 1)[1])
 
     def _dispatch_update(self, update):
         if "callback_query" in update:
