@@ -141,7 +141,7 @@ def do_opening_jumps(count=7):
         print(f"🐇 Jump {i}/{count}")
         safe_device_tap(DEVICE_IP, DEVICE_PORT, JUMP_BUTTON[0], JUMP_BUTTON[1])
         if i < count:
-            time.sleep(random.uniform(0.15, 0.45))
+            time.sleep(random.uniform(0.6, 0.9))  # spaced like 7 deliberate single jumps
 
 
 def using_cookie_relay():

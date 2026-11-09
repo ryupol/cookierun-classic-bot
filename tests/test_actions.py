@@ -61,6 +61,8 @@ class OpeningJumpsTests(unittest.TestCase):
                 (actions.DEVICE_IP, actions.DEVICE_PORT, actions.JUMP_BUTTON[0], actions.JUMP_BUTTON[1]),
             )
         self.assertEqual(sleep.call_count, 6)
+        for slept in sleep.call_args_list:
+            self.assertTrue(0.6 <= slept.args[0] <= 0.9)
 
 
 class QuickReceiveAndSendLivesTests(unittest.TestCase):
