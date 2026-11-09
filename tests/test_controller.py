@@ -33,16 +33,23 @@ class SendCodeMessageTests(unittest.TestCase):
 
 class FlagParsingTests(unittest.TestCase):
     def test_flags_to_answers_with_boost(self):
-        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n"}
-        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n"])
+        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "n"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n", "n"])
 
     def test_flags_to_answers_without_boost(self):
-        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n"}
-        self.assertEqual(controller.flags_to_answers(flags), ["n", "n", "n", "n"])
+        flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
+        self.assertEqual(controller.flags_to_answers(flags), ["n", "n", "n", "n", "n"])
+
+    def test_flags_to_answers_appends_7j_last(self):
+        flags = {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "y"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "y", "y", "1", "n", "y"])
+        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y", "7j": "y"}
+        self.assertEqual(controller.flags_to_answers(flags), ["y", "n", "n", "y", "y"])
+        self.assertEqual(controller.flags_to_answers(flags)[-1], "y")
 
     def test_flags_to_stdin_ends_with_newline_per_answer(self):
-        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
-        self.assertEqual(controller.flags_to_stdin(flags), "y\nn\nn\ny\n")
+        flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y", "7j": "n"}
+        self.assertEqual(controller.flags_to_stdin(flags), "y\nn\nn\ny\nn\n")
 
     def test_parse_start_args_overrides_base(self):
         base = dict(controller.DEFAULT_FLAGS)
@@ -57,6 +64,12 @@ class FlagParsingTests(unittest.TestCase):
         self.assertEqual(flags["fs"], "y")
         self.assertEqual(flags["relic"], "n")
 
+    def test_parse_start_args_accepts_7j(self):
+        base = dict(controller.DEFAULT_FLAGS)
+        flags = controller.parse_start_args("7j=y", base)
+        self.assertEqual(flags["7j"], "y")
+        self.assertEqual(flags["fs"], "n")
+
     def test_parse_start_args_rejects_unknown_flag(self):
         base = dict(controller.DEFAULT_FLAGS)
         with self.assertRaises(ValueError):
@@ -67,8 +80,22 @@ class FlagParsingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.parse_start_args("fs", base)
 
+    def test_default_7j_is_n(self):
+        self.assertEqual(controller.DEFAULT_FLAGS["7j"], "n")
+
     def test_validate_flags_accepts_defaults(self):
         controller.validate_flags(dict(controller.DEFAULT_FLAGS))  # no raise
+
+    def test_validate_flags_accepts_7j_yes(self):
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["7j"] = "y"
+        controller.validate_flags(flags)  # no raise
+
+    def test_validate_flags_rejects_bad_7j(self):
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["7j"] = "maybe"
+        with self.assertRaises(ValueError):
+            controller.validate_flags(flags)
 
     def test_validate_flags_rejects_bad_yn(self):
         flags = dict(controller.DEFAULT_FLAGS)
@@ -277,7 +304,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
         c.bot = MagicMock()
         c.bot.is_running.return_value = False
 
-        controller.cmd_start(c, 123, "")
+        controller.cmd_start(c, 123, "fs=n")
 
         c.bot.start.assert_not_called()
         self.assertTrue(
@@ -453,9 +480,11 @@ class CmdPauseTests(unittest.TestCase):
         c.paused = True
         flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
         with patch.object(controller, "_load_last_start", return_value=flags):
-            controller.cmd_start(c, 123, "")
+            controller.cmd_start(c, 123, "cr=y")
 
-        c.bot.start.assert_called_once_with(flags)
+        c.bot.start.assert_called_once_with(
+            {"fs": "y", "cr": "y", "rb": "n", "relic": "y", "7j": "n"}
+        )
         self.assertFalse(c.paused)
 
     @patch("controller.device_ensure_app_running", side_effect=RuntimeError("adb offline"))
@@ -464,7 +493,7 @@ class CmdPauseTests(unittest.TestCase):
         c = controller.Controller()
         c.paused = True
 
-        controller.cmd_start(c, 123, "")
+        controller.cmd_start(c, 123, "fs=n")
 
         self.assertTrue(c.paused)
 
@@ -476,6 +505,204 @@ class CmdPauseTests(unittest.TestCase):
         controller.cmd_status(c, 123, "")
 
         self.assertIn("PAUSED", send_message.call_args.args[1])
+
+
+def _callback(data, user_id=111, chat_id=5, message_id=9, callback_id="cb1"):
+    return {
+        "id": callback_id,
+        "from": {"id": user_id},
+        "data": data,
+        "message": {"message_id": message_id, "chat": {"id": chat_id}},
+    }
+
+
+def _button_labels(markup):
+    return [button["text"] for row in markup["inline_keyboard"] for button in row]
+
+
+class InlineBoardTests(unittest.TestCase):
+    def test_help_guide_and_usage_document_7j_and_menu(self):
+        self.assertIn("7j=y|n", controller.HELP_TEXT)
+        self.assertIn("7j=y|n", controller.GUIDE_TEXT)
+        self.assertIn("7j=y|n", controller._START_USAGE)
+        self.assertIn("/menu", controller.HELP_TEXT)
+
+    def test_board_keyboard_labels(self):
+        flags = {"fs": "y", "cr": "n", "rb": "3", "relic": "n", "7j": "y"}
+        self.assertEqual(
+            _button_labels(controller.board_keyboard(flags)),
+            [
+                "⚡ Fast Start: ✅",
+                "🍪 Cookie Relay: ❌",
+                "🎲 Random Boost: 3",
+                "🏺 Relic: ❌",
+                "🐇 7 Jumps: ✅",
+                "▶️ Start",
+            ],
+        )
+
+    def test_next_rb_wraps_after_last_boost(self):
+        self.assertEqual(controller.next_rb_value("n"), "1")
+        self.assertEqual(controller.next_rb_value(str(controller.BOOST_COUNT - 1)), str(controller.BOOST_COUNT))
+        self.assertEqual(controller.next_rb_value(str(controller.BOOST_COUNT)), "n")
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_bare_start_shows_board_and_does_not_launch(self, send_message, ensure_running):
+        send_message.return_value = {"ok": True, "result": {"message_id": 42}}
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.paused = True
+        saved = {"fs": "y", "cr": "n", "rb": "3", "relic": "y"}
+        with patch.object(controller, "_load_last_start", return_value=saved):
+            controller.cmd_start(c, 123, "")
+
+        ensure_running.assert_not_called()
+        c.bot.start.assert_not_called()
+        self.assertTrue(c.paused)
+        self.assertEqual(c.boards[123]["message_id"], 42)
+        self.assertEqual(c.boards[123]["flags"]["fs"], "y")
+        self.assertEqual(c.boards[123]["flags"]["rb"], "3")
+        self.assertEqual(c.boards[123]["flags"]["7j"], "n")
+        labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
+        self.assertIn("⚡ Fast Start: ✅", labels)
+        self.assertIn("🎲 Random Boost: 3", labels)
+        self.assertIn("▶️ Start", labels)
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "send_message")
+    def test_typed_flags_still_start_immediately(self, send_message, ensure_running):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+
+        controller.cmd_start(c, 123, "fs=y cr=y rb=1 relic=n 7j=y")
+
+        ensure_running.assert_called_once()
+        c.bot.start.assert_called_once_with(
+            {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "y"}
+        )
+        self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
+        self.assertFalse(any(call.kwargs.get("reply_markup") for call in send_message.call_args_list))
+
+    def test_dispatch_update_routes_callback_query(self):
+        c = controller.Controller()
+        payload = {"id": "1"}
+        with patch.object(c, "_handle_callback") as handle_cb, patch.object(c, "_handle_message") as handle_msg:
+            c._dispatch_update({"callback_query": payload})
+        handle_cb.assert_called_once_with(payload)
+        handle_msg.assert_not_called()
+
+    def test_callback_toggle_flips_only_that_flag(self):
+        c = controller.Controller()
+        flags = dict(controller.DEFAULT_FLAGS)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query") as answer, \
+             patch.object(controller, "edit_message_text") as edit:
+            c._handle_callback(_callback("toggle:cr"))
+
+        self.assertEqual(flags["cr"], "y")
+        self.assertEqual(flags["fs"], "n")
+        self.assertEqual(flags["7j"], "n")
+        answer.assert_called_once_with("cb1")
+        self.assertEqual(edit.call_args.args[0], 5)
+        self.assertEqual(edit.call_args.args[1], 9)
+        labels = _button_labels(edit.call_args.kwargs["reply_markup"])
+        self.assertIn("🍪 Cookie Relay: ✅", labels)
+        self.assertIn("⚡ Fast Start: ❌", labels)
+
+    def test_rb_callback_wraps_from_max_to_n(self):
+        c = controller.Controller()
+        flags = dict(controller.DEFAULT_FLAGS)
+        flags["rb"] = str(controller.BOOST_COUNT)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_text") as edit:
+            c._handle_callback(_callback("cycle:rb"))
+            self.assertEqual(flags["rb"], "n")
+            labels = _button_labels(edit.call_args.kwargs["reply_markup"])
+            self.assertIn("🎲 Random Boost: n", labels)
+            c._handle_callback(_callback("cycle:rb", callback_id="cb2"))
+            self.assertEqual(flags["rb"], "1")
+
+    def test_unauthorized_callback_is_ignored(self):
+        c = controller.Controller()
+        flags = dict(controller.DEFAULT_FLAGS)
+        c.boards[5] = {"message_id": 9, "flags": flags}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query") as answer, \
+             patch.object(controller, "edit_message_text") as edit, \
+             patch.object(controller, "send_message") as send_message:
+            c._handle_callback(_callback("toggle:fs", user_id=999))
+            c._handle_callback(_callback("menu:status", user_id=999))
+            c._handle_callback(_callback("board:start", user_id=999))
+
+        answer.assert_not_called()
+        edit.assert_not_called()
+        send_message.assert_not_called()
+        self.assertEqual(flags["fs"], "n")
+
+    @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "answer_callback_query")
+    @patch.object(controller, "send_message")
+    def test_start_button_launches_with_board_flags(self, send_message, answer, ensure_running):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 7
+        flags = {"fs": "y", "cr": "n", "rb": "2", "relic": "y", "7j": "y"}
+        c.boards[5] = {"message_id": 9, "flags": dict(flags)}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}):
+            c._handle_callback(_callback("board:start"))
+
+        ensure_running.assert_called_once()
+        c.bot.start.assert_called_once_with(flags)
+        answer.assert_called_once_with("cb1")
+        self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
+
+    @patch.object(controller, "send_message")
+    def test_menu_command_sends_command_buttons(self, send_message):
+        controller.cmd_menu(controller.Controller(), 123, "")
+        labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
+        self.assertEqual(labels, ["📊 Status", "📋 Logs", "📸 Screenshot", "⏸️ Pause", "🛑 Stop"])
+
+    @patch("controller.device_force_stop_app")
+    @patch("controller.capture_screenshot_bytes", return_value=b"png")
+    @patch("controller.send_photo")
+    @patch("controller._tail_log", return_value=["hello"])
+    @patch.object(controller, "send_message")
+    @patch.object(controller, "answer_callback_query")
+    def test_menu_callbacks_run_existing_commands(
+        self, answer, send_message, tail, send_photo, capture, force_stop
+    ):
+        c = controller.Controller()
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}):
+            c._handle_callback(_callback("menu:status"))
+            self.assertTrue(any("STOPPED" in call.args[1] for call in send_message.call_args_list))
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:logs", callback_id="logs"))
+            tail.assert_called_with(30)
+            self.assertTrue(any("hello" in call.args[1] for call in send_message.call_args_list))
+
+            c._handle_callback(_callback("menu:screenshot", callback_id="shot"))
+            capture.assert_called_once()
+            send_photo.assert_called_once()
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:pause", callback_id="pause"))
+            self.assertTrue(any("not running" in call.args[1] for call in send_message.call_args_list))
+
+            send_message.reset_mock()
+            c._handle_callback(_callback("menu:stop", callback_id="stop"))
+            self.assertTrue(any("not running" in call.args[1] for call in send_message.call_args_list))
+
+        force_stop.assert_not_called()
+        self.assertEqual(answer.call_count, 5)
 
 
 if __name__ == "__main__":

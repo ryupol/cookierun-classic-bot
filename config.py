@@ -12,7 +12,7 @@ DEVICE_PORT = 5555           # Change to your adb device's port number
 TEMPLATE_DIR = "templates"
 MATCH_THRESHOLD = 0.8
 SESSION_RESET_INTERVAL = (5400, 10800)  # 1.5-3 hours
-LIVES_INTERVAL = (25 * 60, 35 * 60)  # 25-35 minutes
+LIVES_INTERVAL = (3 * 3600, 6 * 3600)  # 3-6 hours
 SEND_LIFE_CONFIRM_TIMEOUT = 5.0
 SEND_LIFE_SENT_TIMEOUT = 8.0
 SEND_LIFE_MAX_DURATION = 120.0  # give up the whole send-life flow after this many seconds
@@ -284,6 +284,7 @@ DETECTION_RECOVERY_SCAN_INTERVAL = {
 # -------------------
 START_BUTTON = (955, 650)
 PLAY_BUTTON = (895, 620)
+JUMP_BUTTON = (150, 620)  # PLACEHOLDER - pending live screenshot confirmation
 FAST_START_ITEM = (235, 600)
 COOKIE_RELAY_ITEM = (385, 600)
 RANDOM_BOOST_ITEM = (535, 600)

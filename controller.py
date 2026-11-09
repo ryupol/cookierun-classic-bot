@@ -3,13 +3,20 @@
 This lets you run the bot's terminal remotely from Telegram (e.g. from your
 phone) while keeping bot automation in its own child process:
 
-    /start [fs=y|n cr=y|n rb=1-11|n relic=y|n]  -> launches CookieRun
-                                                    Classic via ADB (if not
-                                                    already running), spawns
+    /start                                       -> inline-button board of the
+                                                    current flags; ▶️ Start
+                                                    launches with those flags
+    /start [fs=y|n cr=y|n rb=1-11|n relic=y|n 7j=y|n]
+                                                 -> launches CookieRun Classic
+                                                    via ADB (if not already
+                                                    running), spawns
                                                     `python3 -u main.py`, and
                                                     pipes the answers to its
                                                     interactive prompts over
                                                     stdin
+    /menu                                        -> inline buttons for status,
+                                                    logs, screenshot, pause,
+                                                    and stop
     /stop                                        -> SIGINT to the whole
                                                      process group (same as
                                                      pressing Ctrl+C), then
@@ -30,11 +37,13 @@ phone) while keeping bot automation in its own child process:
 
 IMPORTANT COUPLING NOTE: the /start flag -> stdin mapping below hard-codes
 the exact order and count of the input() prompts in bot.py's
-prompt_user_options() (bot.py:113-129). If those prompts are ever reordered,
-added to, or removed, this mapping must be updated to match, or /start will
-feed answers to the wrong questions. After every /start, check /logs for the
-"✅ Selected: <boost>" line (bot.py:126) to confirm the answers landed where
-expected.
+prompt_user_options(). The prompts are Fast Start, Cookie Relay, Desired
+Random Boost (plus a boost number when yes), Detect Relic, then 7 jumps
+(use_opening_jumps, answered by the 7j flag) last. If those prompts are ever
+reordered, added to, or removed, this mapping must be updated to match, or
+/start will feed answers to the wrong questions. After every /start, check
+/logs for the "✅ Selected: <boost>" line to confirm the answers landed
+where expected.
 
 Run with:
     python3 controller.py
@@ -78,10 +87,10 @@ LOG_TAIL_DEFAULT = 30
 LOG_TAIL_MAX = 100
 POLL_TIMEOUT = 30  # seconds, Telegram long-poll
 
-# Keep in sync with len(BOOST_CHOICES) in bot.py:67-79.
+# Keep in sync with len(BOOST_CHOICES) in bot.py.
 BOOST_COUNT = 11
 
-DEFAULT_FLAGS = {"fs": "n", "cr": "n", "rb": "n", "relic": "n"}
+DEFAULT_FLAGS = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
 
 API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
@@ -93,23 +102,56 @@ def _api_url(method):
     return f"{API_BASE}/{method}"
 
 
-def send_message(chat_id, text, timeout=10, parse_mode=None):
-    body = {"chat_id": chat_id, "text": text}
-    if parse_mode:
-        body["parse_mode"] = parse_mode
+def _api_post(method, body, timeout=10):
     payload = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
-        _api_url("sendMessage"),
+        _api_url(method),
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        urllib.request.urlopen(request, timeout=timeout)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
     except (socket.gaierror, urllib.error.URLError) as e:
-        print(f"⚠️ Couldn't send Telegram message — connection issue: {e}")
+        print(f"⚠️ Telegram {method} failed — connection issue: {e}")
     except Exception as e:
-        print(f"⚠️ Failed to send Telegram message: {e}")
+        print(f"⚠️ Telegram {method} failed: {e}")
+    return None
+
+
+def send_message(chat_id, text, timeout=10, parse_mode=None, reply_markup=None):
+    body = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        body["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        body["reply_markup"] = reply_markup
+    return _api_post("sendMessage", body, timeout=timeout)
+
+
+def edit_message_text(chat_id, message_id, text, timeout=10, reply_markup=None):
+    body = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if reply_markup is not None:
+        body["reply_markup"] = reply_markup
+    return _api_post("editMessageText", body, timeout=timeout)
+
+
+def edit_message_reply_markup(chat_id, message_id, reply_markup, timeout=10):
+    body = {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup}
+    return _api_post("editMessageReplyMarkup", body, timeout=timeout)
+
+
+def answer_callback_query(callback_query_id, timeout=10):
+    return _api_post("answerCallbackQuery", {"callback_query_id": callback_query_id}, timeout=timeout)
+
+
+def _message_id_from_result(result):
+    if not isinstance(result, dict):
+        return None
+    message = result.get("result")
+    if not isinstance(message, dict):
+        return None
+    return message.get("message_id")
 
 
 def send_code_message(chat_id, header, code_text, timeout=10):
@@ -205,6 +247,7 @@ def flags_to_answers(flags):
         answers.append("y")
         answers.append(flags["rb"])
     answers.append(flags["relic"])
+    answers.append(flags["7j"])
     return answers
 
 
@@ -221,17 +264,18 @@ def parse_start_args(args_text, base):
         key = key.strip().lower()
         value = value.strip().lower()
         if key not in DEFAULT_FLAGS:
-            raise ValueError(f"Unknown flag '{key}'. Valid flags: fs, cr, rb, relic")
+            raise ValueError(f"Unknown flag '{key}'. Valid flags: fs, cr, rb, relic, 7j")
         flags[key] = value
     return flags
 
 
 def validate_flags(flags):
     errors = []
-    for key in ("fs", "cr", "relic"):
-        if flags[key] not in ("y", "n"):
-            errors.append(f"{key} must be y or n (got '{flags[key]}')")
-    rb = flags["rb"]
+    for key in ("fs", "cr", "relic", "7j"):
+        value = flags.get(key)
+        if value not in ("y", "n"):
+            errors.append(f"{key} must be y or n (got '{value}')")
+    rb = str(flags.get("rb"))
     if rb != "n" and not (rb.isdigit() and 1 <= int(rb) <= BOOST_COUNT):
         errors.append(f"rb must be 'n' or 1-{BOOST_COUNT} (got '{rb}')")
     if errors:
@@ -254,6 +298,83 @@ def _load_last_start():
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _flags_from_saved_or_default():
+    """Saved last-start flags, with any new flag filled from DEFAULT_FLAGS."""
+    flags = dict(DEFAULT_FLAGS)
+    saved = _load_last_start()
+    if isinstance(saved, dict):
+        for key in DEFAULT_FLAGS:
+            if key in saved and saved[key] is not None:
+                flags[key] = saved[key]
+    return flags
+
+
+def _yn_mark(value):
+    return "✅" if value == "y" else "❌"
+
+
+def next_rb_value(current):
+    """Cycle rb: n → 1 → 2 → … → BOOST_COUNT → n."""
+    if current == "n":
+        return "1"
+    try:
+        number = int(current)
+    except (TypeError, ValueError):
+        return "1"
+    if number >= BOOST_COUNT:
+        return "n"
+    if number < 1:
+        return "1"
+    return str(number + 1)
+
+
+def board_text(flags):
+    return (
+        "🍪 Start options\n"
+        f"fs={flags['fs']}  cr={flags['cr']}  rb={flags['rb']}  "
+        f"relic={flags['relic']}  7j={flags['7j']}\n"
+        "Tap a button to change it, then ▶️ Start."
+    )
+
+
+def board_keyboard(flags):
+    rows = []
+    for key, label in (("fs", "⚡ Fast Start"), ("cr", "🍪 Cookie Relay")):
+        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
+    rows.append([{"text": f"🎲 Random Boost: {flags['rb']}", "callback_data": "cycle:rb"}])
+    for key, label in (("relic", "🏺 Relic"), ("7j", "🐇 7 Jumps")):
+        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
+    rows.append([{"text": "▶️ Start", "callback_data": "board:start"}])
+    return {"inline_keyboard": rows}
+
+
+def menu_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Status", "callback_data": "menu:status"},
+                {"text": "📋 Logs", "callback_data": "menu:logs"},
+            ],
+            [{"text": "📸 Screenshot", "callback_data": "menu:screenshot"}],
+            [
+                {"text": "⏸️ Pause", "callback_data": "menu:pause"},
+                {"text": "🛑 Stop", "callback_data": "menu:stop"},
+            ],
+        ]
+    }
+
+
+MENU_TEXT = "🍪 Controller menu\nTap a button to run that command."
+
+_MENU_COMMANDS = {
+    "status": "/status",
+    "logs": "/logs",
+    "screenshot": "/screenshot",
+    "pause": "/pause",
+    "stop": "/stop",
+}
 
 
 # -------------------
@@ -352,11 +473,15 @@ class BotProcess:
 # -------------------
 # COMMAND HANDLERS
 # -------------------
+_START_USAGE = "Usage: /start fs=y cr=y rb=1 relic=n 7j=y|n"
+
 HELP_TEXT = (
     "🍪 CookieRun Bot Controller\n\n"
-    "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n] — launches CookieRun Classic "
-    "(if not already running) then starts the bot (reuses last flags for "
-    "anything omitted)\n"
+    "/start — button board for the current flags; tap ▶️ Start to launch\n"
+    "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n 7j=y|n] — launches CookieRun "
+    "Classic (if not already running) then starts the bot (reuses last flags "
+    "for anything omitted)\n"
+    "/menu — buttons for status, logs (30 lines), screenshot, pause, and stop\n"
     "/pause — stop bot taps, leave CookieRun Classic open; /start to restart\n"
     "/stop — graceful stop (same as Ctrl+C), then closes CookieRun Classic\n"
     "/kill — force stop (SIGKILL), then closes CookieRun Classic\n"
@@ -373,7 +498,12 @@ GUIDE_TEXT = (
     "cr=y|n — Cookie Relay: buy + use it\n"
     "rb=1-11|n — Desired Random Boost: buy + use the boost number below, "
     "or n to skip\n"
-    "relic=y|n — Detect Relic: open + claim relics when seen\n\n"
+    "relic=y|n — Detect Relic: open + claim relics when seen\n"
+    "7j=y|n — 7 jumps at the start of every run\n\n"
+    "Bare /start opens a button board (seeded from the last start, or the "
+    "defaults) instead of launching. Tap a flag to change it — Random Boost "
+    "cycles n → 1 → … → 11 → n — then ▶️ Start.\n"
+    "/menu opens buttons for status, logs, screenshot, pause, and stop.\n\n"
     "🎲 rb boost numbers\n"
     "1. Double Coins\n"
     "2. +15% Score Bonus\n"
@@ -386,23 +516,21 @@ GUIDE_TEXT = (
     "9. +20% HP from Potions\n"
     "10. Magnetic Aura\n"
     "11. 2 Pit Lifts\n\n"
-    "Example: /start fs=y cr=y rb=1 relic=n"
+    "Example: /start fs=y cr=y rb=1 relic=n 7j=y"
 )
 
 
-def cmd_start(controller, chat_id, args_text):
+def _launch_with_flags(controller, chat_id, flags):
     if controller.pause_pending:
         send_message(chat_id, "⏳ Bot is still pausing. Wait for the PAUSED message before /start.")
         return
     if controller.bot.is_running():
         send_message(chat_id, "⚠️ Bot is already running. Use /stop first.")
         return
-    base = _load_last_start() or dict(DEFAULT_FLAGS)
     try:
-        flags = parse_start_args(args_text, base)
         validate_flags(flags)
     except ValueError as e:
-        send_message(chat_id, f"❌ {e}\n\nUsage: /start fs=y cr=y rb=1 relic=n")
+        send_message(chat_id, f"❌ {e}\n\n{_START_USAGE}")
         return
     send_message(chat_id, "📱 Launching CookieRun Classic...")
     try:
@@ -410,6 +538,7 @@ def cmd_start(controller, chat_id, args_text):
     except Exception as e:
         send_message(chat_id, f"❌ Couldn't launch CookieRun Classic: {e}")
         return
+    flags = dict(flags)
     controller.bot.start(flags)
     controller.last_known_alive = True
     controller.paused = False
@@ -419,6 +548,29 @@ def cmd_start(controller, chat_id, args_text):
         chat_id,
         f"▶️ Started (pid {controller.bot.proc.pid})\n{flag_str}  →  stdin: {answers_str}",
     )
+
+
+def cmd_start(controller, chat_id, args_text):
+    if controller.pause_pending:
+        send_message(chat_id, "⏳ Bot is still pausing. Wait for the PAUSED message before /start.")
+        return
+    if controller.bot.is_running():
+        send_message(chat_id, "⚠️ Bot is already running. Use /stop first.")
+        return
+    if not args_text.strip():
+        controller.show_start_board(chat_id, _flags_from_saved_or_default())
+        return
+    try:
+        flags = parse_start_args(args_text, _flags_from_saved_or_default())
+        validate_flags(flags)
+    except ValueError as e:
+        send_message(chat_id, f"❌ {e}\n\n{_START_USAGE}")
+        return
+    _launch_with_flags(controller, chat_id, flags)
+
+
+def cmd_menu(controller, chat_id, args_text):
+    send_message(chat_id, MENU_TEXT, reply_markup=menu_keyboard())
 
 
 def cmd_pause(controller, chat_id, args_text):
@@ -549,6 +701,7 @@ def cmd_guide(controller, chat_id, args_text):
 
 COMMANDS = {
     "/start": cmd_start,
+    "/menu": cmd_menu,
     "/pause": cmd_pause,
     "/stop": cmd_stop,
     "/kill": cmd_kill,
@@ -572,6 +725,89 @@ class Controller:
         self.pause_pending = False
         self.paused = False
         self.pause_chat_id = None
+        # chat_id -> {"message_id": int | None, "flags": dict}
+        # In memory only. Restarting the controller resets the board.
+        self.boards = {}
+
+    def show_start_board(self, chat_id, flags):
+        flags = {key: flags.get(key, DEFAULT_FLAGS[key]) for key in DEFAULT_FLAGS}
+        result = send_message(chat_id, board_text(flags), reply_markup=board_keyboard(flags))
+        self.boards[chat_id] = {
+            "message_id": _message_id_from_result(result),
+            "flags": flags,
+        }
+
+    def _board_for(self, chat_id, message_id):
+        board = self.boards.get(chat_id)
+        if board is None:
+            board = {"message_id": message_id, "flags": _flags_from_saved_or_default()}
+            self.boards[chat_id] = board
+        if message_id is not None:
+            board["message_id"] = message_id
+        return board
+
+    def _refresh_board(self, chat_id, board):
+        message_id = board.get("message_id")
+        if message_id is None:
+            return
+        flags = board["flags"]
+        edit_message_text(chat_id, message_id, board_text(flags), reply_markup=board_keyboard(flags))
+
+    def _toggle_board_flag(self, chat_id, message_id, key):
+        if key not in DEFAULT_FLAGS or key == "rb":
+            return
+        board = self._board_for(chat_id, message_id)
+        current = board["flags"].get(key, "n")
+        board["flags"][key] = "n" if current == "y" else "y"
+        self._refresh_board(chat_id, board)
+
+    def _cycle_board_rb(self, chat_id, message_id):
+        board = self._board_for(chat_id, message_id)
+        board["flags"]["rb"] = next_rb_value(board["flags"].get("rb", "n"))
+        self._refresh_board(chat_id, board)
+
+    def _start_from_board(self, chat_id):
+        board = self.boards.get(chat_id)
+        flags = dict(board["flags"]) if board else _flags_from_saved_or_default()
+        _launch_with_flags(self, chat_id, flags)
+
+    def _dispatch_menu(self, chat_id, action):
+        command = _MENU_COMMANDS.get(action)
+        if command is None:
+            send_message(chat_id, f"❓ Unknown menu action: {action}")
+            return
+        COMMANDS[command](self, chat_id, "")
+
+    def _handle_callback(self, callback):
+        data = callback.get("data") or ""
+        user_id = (callback.get("from") or {}).get("id")
+        if not self.is_authorized(user_id):
+            print(f"⛔ Rejected callback from unauthorized user_id={user_id}: {data!r}")
+            return
+        message = callback.get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        callback_id = callback.get("id")
+        if callback_id:
+            answer_callback_query(callback_id)
+        if chat_id is None:
+            return
+        self._check_child_exit()
+        self.last_chat_id = chat_id
+        message_id = message.get("message_id")
+        if data.startswith("toggle:"):
+            self._toggle_board_flag(chat_id, message_id, data.split(":", 1)[1])
+        elif data == "cycle:rb":
+            self._cycle_board_rb(chat_id, message_id)
+        elif data == "board:start":
+            self._start_from_board(chat_id)
+        elif data.startswith("menu:"):
+            self._dispatch_menu(chat_id, data.split(":", 1)[1])
+
+    def _dispatch_update(self, update):
+        if "callback_query" in update:
+            self._handle_callback(update["callback_query"])
+        if "message" in update:
+            self._handle_message(update["message"])
 
     def is_authorized(self, user_id):
         return user_id in TELEGRAM_ALLOWED_USER_IDS
@@ -654,8 +890,7 @@ class Controller:
             consecutive_failures = 0
             for update in updates:
                 self.offset = update["update_id"] + 1
-                if "message" in update:
-                    self._handle_message(update["message"])
+                self._dispatch_update(update)
             self._check_child_exit()
 
 
