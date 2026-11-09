@@ -31,7 +31,6 @@ from services.actions import (
     purchase_desired_random_boost,
     purchase_fast_start,
     start_game,
-    start_special_episode,
     using_cookie_relay,
     using_fast_start,
     recover_friend_overlay,
@@ -239,16 +238,9 @@ def main():
 
             if stage == "MAINMENU":
                 print("🎮 Detected Stage: MAINMENU")
-                if detection_group == "POST_GAME":
-                    # Returning from a finished run: the post-game accepts
-                    # (mystery box, congrats, etc.) already waited out the
-                    # transition, so skip the refresh wait and start the next
-                    # game in this same pass.
-                    detection_group = "PRE_GAME"
-                else:
-                    # Wait screen refresh
-                    print("⏳ Waiting 3 seconds for screen refresh...")
-                    time.sleep(3)
+                # Wait screen refresh
+                print("⏳ Waiting 3 seconds for screen refresh...")
+                time.sleep(3)
                 elapsed = time.time() - session_start_time
                 if elapsed >= session_reset_interval:
                     print(f"🔄 Session reset triggered after {elapsed / 3600:.2f}h — restarting app...")
@@ -271,6 +263,10 @@ def main():
                     lives_interval = random.uniform(*LIVES_INTERVAL)
                     last_stage = None
                     continue
+                if detection_group == "POST_GAME":
+                    detection_group = "PRE_GAME"
+                    last_stage = None
+                    continue
                 if not is_first_game:
                     delay = random.uniform(1, 4)
                     print(f"⏳ Waiting for {delay:.2f} seconds before starting the next game...")
@@ -278,14 +274,6 @@ def main():
                 is_first_game = False
                 start_game()
                 detection_group = "PRE_GAME"
-            elif stage == "SPECIAL_MAINMENU":
-                print("🏴‍☠️ Detected Stage: SPECIAL_MAINMENU")
-                # Special Episodes have no purchase/store page: PLAY opens
-                # the episode intro, a second tap starts the run.
-                start_special_episode()
-                detection_group = "IN_GAME"
-                time.sleep(0.2)
-                last_stage = None
             elif stage == "PURCHASE_ITEM":
                 print("🛒 Detected Stage: PURCHASE_ITEM")
                 if options["use_fast_start"]:
