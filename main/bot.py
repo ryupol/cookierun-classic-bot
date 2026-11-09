@@ -239,8 +239,8 @@ def main():
             if stage == "MAINMENU":
                 print("🎮 Detected Stage: MAINMENU")
                 # Wait screen refresh
-                print("⏳ Waiting 3 seconds for screen refresh...")
-                time.sleep(3)
+                print("⏳ Waiting 1 second for screen refresh...")
+                time.sleep(1)
                 elapsed = time.time() - session_start_time
                 if elapsed >= session_reset_interval:
                     print(f"🔄 Session reset triggered after {elapsed / 3600:.2f}h — restarting app...")
@@ -268,7 +268,7 @@ def main():
                     last_stage = None
                     continue
                 if not is_first_game:
-                    delay = random.uniform(1, 4)
+                    delay = random.uniform(0.5, 2)
                     print(f"⏳ Waiting for {delay:.2f} seconds before starting the next game...")
                     time.sleep(delay)
                 is_first_game = False
