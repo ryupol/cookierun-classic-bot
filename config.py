@@ -284,7 +284,7 @@ DETECTION_RECOVERY_SCAN_INTERVAL = {
 # -------------------
 START_BUTTON = (955, 650)
 PLAY_BUTTON = (895, 620)
-JUMP_BUTTON = (150, 620)  # PLACEHOLDER - pending live screenshot confirmation
+JUMP_BUTTON = (150, 620)  # center of the left (up-arrow) Jump button; confirmed via live screenshot 2026-11-09
 FAST_START_ITEM = (235, 600)
 COOKIE_RELAY_ITEM = (385, 600)
 RANDOM_BOOST_ITEM = (535, 600)
