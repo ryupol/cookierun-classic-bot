@@ -58,6 +58,11 @@ STAGE_TOO_MANY_TREASURES_TEMPLATE = ["TOO_MANY_TREASURES_1.png"]
 STAGE_OVERTAKE_BREAK_SCORE_TEMPLATE = ["OVERTAKE_BREAK_SCORE_1.png"]
 STAGE_PARTY_RUN_TEMPLATE = ["PARTY_RUN_1.png"]
 STAGE_GAME_SETTINGS_TEMPLATE = ["GAME_SETTINGS_1.png"]
+# Special Episode hub (its main menu), detected by the "Coin Ranking" title.
+# The template was cropped from a phone-scale screenshot, so frames must be
+# downscaled to match it (see STAGE_TEMPLATE_SCALE below): at 0.514x it
+# scores ~0.99 on the hub vs ~0.28 on the regular lobby.
+STAGE_SPECIAL_MAINMENU_TEMPLATE = ["SPECIAL_MAINMENU_1.png"]
 
 # -------------------
 # STAGE DETECTION REGIONS
@@ -92,6 +97,7 @@ STAGE_TOO_MANY_TREASURES_REGION = (353, 154, 931, 476)
 STAGE_OVERTAKE_BREAK_SCORE_REGION = (479, 64, 799, 132)
 STAGE_PARTY_RUN_REGION = (359, 44, 922, 138)
 STAGE_GAME_SETTINGS_REGION = (484, 62, 769, 122)
+STAGE_SPECIAL_MAINMENU_REGION = (10, 40, 500, 160)  # top band covering the "Coin Ranking" title
 
 # -------------------
 # DETECTION TEMPLATES
@@ -182,6 +188,7 @@ STAGE_TEMPLATES = {
     "LEAGUE_RESULTS":          STAGE_LEAGUE_RESULTS_TEMPLATE,
     "PREVIOUS_RANK_RESULTS":   STAGE_PREVIOUS_RANK_RESULTS_TEMPLATE,
     "PREVIOUS_RESULTS_CONFIRM": STAGE_PREVIOUS_RESULTS_CONFIRM_TEMPLATE,
+    "SPECIAL_MAINMENU":        STAGE_SPECIAL_MAINMENU_TEMPLATE,
 }
 
 STAGE_REGIONS = {
@@ -211,6 +218,14 @@ STAGE_REGIONS = {
     "PREVIOUS_RANK_RESULTS":   STAGE_PREVIOUS_RANK_RESULTS_REGION,
     "PREVIOUS_RESULTS_CONFIRM": STAGE_PREVIOUS_RESULTS_CONFIRM_REGION,
     "TOO_MANY_TREASURES":      STAGE_TOO_MANY_TREASURES_REGION,
+    "SPECIAL_MAINMENU":        STAGE_SPECIAL_MAINMENU_REGION,
+}
+
+# Per-stage frame scale: stages whose templates were cropped from non-native
+# (e.g. phone-screenshot) sources. detect_stage shrinks the search area by
+# this factor before matching, so the template works at its native scale.
+STAGE_TEMPLATE_SCALE = {
+    "SPECIAL_MAINMENU": 0.514,
 }
 
 # -------------------
@@ -238,6 +253,7 @@ DETECTION_GROUP_PRE_GAME = (
     "TOO_MANY_TREASURES",
     "PARTY_RUN",
     "GAME_SETTINGS",
+    "SPECIAL_MAINMENU",
     "MAINMENU",
     "PURCHASE_ITEM",
 )
@@ -317,6 +333,10 @@ LEADERBOARD_BOTTOM_POSITION = (435, 620)
 CLOSE_ANNOUNCEMENT_DIALOG_BUTTON = (1127, 66)
 EXIT_PARTY_RUN_MODE_BUTTON = (1214, 89)
 EXIT_GAME_SETTINGS_BUTTON = (1116, 98)
+# Special Episode entry: the hub's PLAY! button. The episode page that opens
+# after the first tap has its own PLAY! at the same spot, so the flow is
+# just two taps on the same button (no purchase/store page exists).
+SPECIAL_PLAY_BUTTON = (1025, 620)  # bottom-right PLAY! button; confirmed via debug frame 2026-11-09
 
 # -------------------
 # ANTI-BOT CAPTCHA
