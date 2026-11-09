@@ -46,7 +46,10 @@ TELEGRAM_ALLOWED_USER_IDS = {
 # -------------------
 # STAGE DETECTION TEMPLATES
 # -------------------
-STAGE_MAINMENU_TEMPLATE = ["MAINMENU_1.png"]
+# MAINMENU_2/3 ("League Results" header) and MAINMENU_4 ("Previous Rank
+# Results" header) are intentionally detected as MAINMENU per user decision —
+# those result screens are treated as the lobby in the current game patch.
+STAGE_MAINMENU_TEMPLATE = ["MAINMENU_1.png", "MAINMENU_2.png", "MAINMENU_3.png", "MAINMENU_4.png"]
 STAGE_PURCHASE_ITEM_TEMPLATE = ["PURCHASE_ITEM_1.png"]
 STAGE_GAME_START_TEMPLATE = ["GAME_START_1.png"]
 STAGE_GAME_RELAY_TEMPLATE = ["GAME_RELAY_1.png"]
@@ -77,7 +80,9 @@ STAGE_GAME_SETTINGS_TEMPLATE = ["GAME_SETTINGS_1.png"]
 # STAGE DETECTION REGIONS
 # -------------------
 # Format: (x1, y1, x2, y2)
-STAGE_MAINMENU_REGION = (154, 150, 344, 225)
+# Union of the lobby top-left area and the top-center header strip, so the
+# League/Previous Rank Results header templates (MAINMENU_2/3/4) can match.
+STAGE_MAINMENU_REGION = (154, 42, 832, 225)
 STAGE_PURCHASE_ITEM_REGION = (474, 84, 602, 138)
 STAGE_GAME_START_REGION = (573, 265, 733, 427)
 STAGE_GAME_RELAY_REGION = (573, 265, 733, 427)
