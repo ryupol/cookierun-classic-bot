@@ -87,8 +87,11 @@ LOG_TAIL_DEFAULT = 30
 LOG_TAIL_MAX = 100
 POLL_TIMEOUT = 30  # seconds, Telegram long-poll
 
-# Keep in sync with len(BOOST_CHOICES) in bot.py.
-BOOST_COUNT = 11
+# Names come straight from bot.py so the board always shows the real boost list.
+from bot import BOOST_CHOICES  # noqa: E402
+
+BOOST_COUNT = len(BOOST_CHOICES)
+BOOST_NAMES = [name for name, _ in BOOST_CHOICES]
 
 DEFAULT_FLAGS = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
 
@@ -315,25 +318,19 @@ def _yn_mark(value):
     return "✅" if value == "y" else "❌"
 
 
-def next_rb_value(current):
-    """Cycle rb: n → 1 → 2 → … → BOOST_COUNT → n."""
-    if current == "n":
-        return "1"
-    try:
-        number = int(current)
-    except (TypeError, ValueError):
-        return "1"
-    if number >= BOOST_COUNT:
-        return "n"
-    if number < 1:
-        return "1"
-    return str(number + 1)
+def rb_label(value):
+    """Board label for the rb flag: off, or the full boost name."""
+    if value == "n":
+        return "❌"
+    if value.isdigit() and 1 <= int(value) <= BOOST_COUNT:
+        return f"{BOOST_NAMES[int(value) - 1]} ✅"
+    return value
 
 
 def board_text(flags):
     return (
         "🍪 Start options\n"
-        f"fs={flags['fs']}  cr={flags['cr']}  rb={flags['rb']}  "
+        f"fs={flags['fs']}  cr={flags['cr']}  rb={flags['rb']} ({rb_label(flags['rb'])})  "
         f"relic={flags['relic']}  7j={flags['7j']}\n"
         "Tap a button to change it, then ▶️ Start."
     )
@@ -343,7 +340,12 @@ def board_keyboard(flags):
     rows = []
     for key, label in (("fs", "⚡ Fast Start"), ("cr", "🍪 Cookie Relay")):
         rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
-    rows.append([{"text": f"🎲 Random Boost: {flags['rb']}", "callback_data": "cycle:rb"}])
+    rows.append([{"text": f"🎲 Random Boost: {rb_label(flags['rb'])}", "callback_data": "toggle:rb"}])
+    if flags["rb"] != "n":
+        # Boost picker: radio-style, exactly one selected.
+        for i, name in enumerate(BOOST_NAMES, 1):
+            mark = "✅ " if flags["rb"] == str(i) else ""
+            rows.append([{"text": f"{mark}{i}. {name}", "callback_data": f"setrb:{i}"}])
     for key, label in (("relic", "🏺 Relic"), ("7j", "🐇 7 Jumps")):
         rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
     rows.append([{"text": "▶️ Start", "callback_data": "board:start"}])
@@ -502,7 +504,8 @@ GUIDE_TEXT = (
     "7j=y|n — 7 jumps at the start of every run\n\n"
     "Bare /start opens a button board (seeded from the last start, or the "
     "defaults) instead of launching. Tap a flag to change it — Random Boost "
-    "cycles n → 1 → … → 11 → n — then ▶️ Start.\n"
+    "toggles on/off; when on, 11 named boost buttons appear — tap one to "
+    "select it — then ▶️ Start.\n"
     "/menu opens buttons for status, logs, screenshot, pause, and stop.\n\n"
     "🎲 rb boost numbers\n"
     "1. Double Coins\n"
@@ -761,9 +764,20 @@ class Controller:
         board["flags"][key] = "n" if current == "y" else "y"
         self._refresh_board(chat_id, board)
 
-    def _cycle_board_rb(self, chat_id, message_id):
+    def _toggle_board_rb(self, chat_id, message_id):
+        """Random Boost main button: off -> on (default Double Coins, picker
+        expands); on -> off (picker collapses)."""
         board = self._board_for(chat_id, message_id)
-        board["flags"]["rb"] = next_rb_value(board["flags"].get("rb", "n"))
+        current = board["flags"].get("rb", "n")
+        board["flags"]["rb"] = "1" if current == "n" else "n"
+        self._refresh_board(chat_id, board)
+
+    def _set_board_rb(self, chat_id, message_id, value):
+        """Radio-select one boost by number; invalid values are ignored."""
+        if not (value.isdigit() and 1 <= int(value) <= BOOST_COUNT):
+            return
+        board = self._board_for(chat_id, message_id)
+        board["flags"]["rb"] = value
         self._refresh_board(chat_id, board)
 
     def _start_from_board(self, chat_id):
@@ -794,10 +808,12 @@ class Controller:
         self._check_child_exit()
         self.last_chat_id = chat_id
         message_id = message.get("message_id")
-        if data.startswith("toggle:"):
+        if data == "toggle:rb":
+            self._toggle_board_rb(chat_id, message_id)
+        elif data.startswith("toggle:"):
             self._toggle_board_flag(chat_id, message_id, data.split(":", 1)[1])
-        elif data == "cycle:rb":
-            self._cycle_board_rb(chat_id, message_id)
+        elif data.startswith("setrb:"):
+            self._set_board_rb(chat_id, message_id, data.split(":", 1)[1])
         elif data == "board:start":
             self._start_from_board(chat_id)
         elif data.startswith("menu:"):

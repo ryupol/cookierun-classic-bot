@@ -119,7 +119,7 @@ Managing the session manually:
 
 | Command | Effect |
 | --- | --- |
-| `/start` | Opens an inline-button board seeded from the last `/start` flags (or the defaults). Each button toggles Fast Start, Cookie Relay, Relic, and 7 jumps; Random Boost cycles `n → 1 → … → 11 → n`. `▶️ Start` launches with the flags shown on the board. |
+| `/start` | Opens an inline-button board seeded from the last `/start` flags (or the defaults). Each button toggles Fast Start, Cookie Relay, Relic, and 7 jumps; Random Boost toggles on/off, and while on, 11 named boost buttons appear — tap one to select it (single selection). `▶️ Start` launches with the flags shown on the board. |
 | `/start fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n 7j=y\|n` | Starts immediately with typed flags. Launches CookieRun Classic via ADB if it isn't already running, waits for it to come up, then starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. |
 | `/menu` | Inline buttons for status, logs (last 30 lines), screenshot, pause, and stop. |
 | `/pause` | Stops bot automation with `SIGINT` but leaves CookieRun Classic open so you can edit your build manually. Wait for the PAUSED confirmation, then use `/start` (and `▶️ Start`) or `/start` with typed flags to restart automation with the saved flags. The game itself keeps running. |
