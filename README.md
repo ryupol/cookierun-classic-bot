@@ -1,329 +1,134 @@
 # CookieRun Classic Bot
 
-An automated bot for CookieRun Classic that uses ADB (Android Debug Bridge) and OpenCV template matching to detect game stages and automate gameplay on an Android device or emulator.
+Bot that plays CookieRun Classic for you: taps through menus, runs games back to back, sends friend lives. Works via ADB + OpenCV template matching. **Screen must be 1280×720.**
 
-## Features
+## First time? Do this (~20 min, macOS + BlueStacks)
 
-- Automatically detects game stages via screen capture and template matching
-- Handles the full game loop: Main Menu → Purchase Items → Game Start → Relay → Game Complete → Mystery Box → Congratulations → Level Up → Relic Complete → Relic Claim → Daily Check-in → Daily Treasure → Enter League → League Results → Previous Rank Results → Anti-Bot → Connection Lost → Inactive
-- Optional **Fast Start** power-up (auto-purchase and use)
-- Optional **Cookie Relay** power-up (auto-purchase and use)
-- Optional **Desired Random Boost** (auto-purchase the selected boost from 11 available options)
-- Optional **7 jumps** at the start of each run (seven taps on the jump button, for long runs)
-- Human-like tap behavior with randomized coordinate jitter and delays
-- Auto-waits 30–60 seconds between games to reduce detection risk
-- Periodic session reset: automatically restarts the app every 1.5–3 hours to avoid long-session detection
-- Anti-bot card challenge detection: identifies and taps the odd card out automatically
-- Debug screen saving for troubleshooting
-- Telegram alerts on crashes and unrecoverable stuck states
-- Optional Telegram remote control (`controller.py`) — inline-button start board and `/menu`, or typed `/start` flags; status, logs, pause/stop, and a live screenshot from your phone
-
-## Quickstart (macOS + BlueStacks)
-
-Tested and confirmed working end-to-end on macOS with BlueStacks Air (Apple Silicon). Takes ~20 minutes.
-
-1. **Install ADB:**
-   ```bash
-   brew install android-platform-tools
-   ```
-
-2. **Install BlueStacks Air** from [bluestacks.com](https://www.bluestacks.com) (Apple Silicon build), launch it.
-
-3. **Set the emulator resolution to 1280×720** — BlueStacks Settings → Display.
-
-4. **Enable ADB debugging in BlueStacks** — Settings → Advanced → toggle Android Debug Bridge on.
-
-5. **Install CookieRun Classic** inside BlueStacks (Play Store or sideload the APK).
-
-6. **Connect ADB to the emulator:**
+1. Install ADB: `brew install android-platform-tools`
+2. Install [BlueStacks Air](https://www.bluestacks.com) (Apple Silicon), launch it
+3. BlueStacks Settings → Display → set **1280×720**; Settings → Advanced → turn on **Android Debug Bridge**
+4. Install CookieRun Classic inside BlueStacks, open it once
+5. Connect and run:
    ```bash
    adb connect 127.0.0.1:5555
-   adb devices    # should show 127.0.0.1:5555   device
-   ```
-   If BlueStacks uses a different port, use that instead — check with `adb devices`.
-
-7. **Set up the Python environment:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+   python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-   ```
-
-8. **Confirm `config.py`** has `DEVICE_PORT` matching the port from step 6 (`5555` for BlueStacks; MuMu Player defaults to `7555`).
-
-9. **Run it:**
-   ```bash
-   source .venv/bin/activate
    python3 main.py
    ```
+6. Answer the option prompts. Stop anytime with `Ctrl+C`.
 
-Leave BlueStacks running with CookieRun Classic open before starting the bot. Stop the bot anytime with `Ctrl+C`.
+Works. If `adb devices` shows a different port, edit `DEVICE_PORT` in `config.py`.
 
-## Remote Control via Telegram (optional)
+## What it does
 
-`controller.py` lets you run the bot's terminal remotely from Telegram — useful if the bot runs on a MacBook you're not sitting in front of (e.g. controlling it from your phone).
+- Plays the full game loop: menu → purchase → run → relay → rewards → repeat
+- Optional power-ups each run: Fast Start, Cookie Relay, one of 11 Random Boosts, 7 opening jumps
+- Sends + receives all friend lives from the mailbox every 3–6 h, one click
+- Restarts the app every 1.5–3 h and solves the anti-bot card challenge to stay under the radar
+- Texts you on Telegram if it crashes or gets stuck
 
-It does **not** replace `python3 main.py`; instead it spawns/stops that same process for you and answers its prompts over stdin. On startup, `bot.py` scans the current game screen so it can reconnect after a pause.
+## Control it from your phone (Telegram, ~10 min setup)
 
-### Setup
+Buttons, not typed commands. New users start here.
 
-1. **Create a Telegram bot** via [@BotFather](https://t.me/BotFather) and copy the token it gives you.
-2. **Find your numeric Telegram user id** — message [@userinfobot](https://t.me/userinfobot) and it'll reply with your id.
-3. **Add both to `.env`** (copy `.env.example` if you haven't already):
+1. Message [@BotFather](https://t.me/BotFather) → create bot → copy token
+2. Message [@userinfobot](https://t.me/userinfobot) → copy your numeric id
+3. Copy `.env.example` to `.env`, fill in:
    ```
-   TELEGRAM_BOT_TOKEN=123456:abc-your-bot-token
+   TELEGRAM_BOT_TOKEN=123456:abc-your-token
    TELEGRAM_ALLOWED_USER_IDS=111111111
    ```
-   `TELEGRAM_ALLOWED_USER_IDS` is comma-separated if you want more than one person to be able to control it. **Leave it empty and the controller refuses to start** — this prevents a leaked token from letting a stranger spawn processes on your Mac.
-4. **Message your bot once** on Telegram (anything, e.g. `/help`) so it can find your chat.
-5. **Install tmux** (keeps the controller running after you close the terminal) and confirm `caffeinate` is available (it ships with macOS):
-   ```bash
-   brew install tmux
-   which caffeinate   # should print /usr/bin/caffeinate
-   ```
+   Empty allowlist = controller refuses to start (a leaked token can't spawn processes on your Mac)
+4. `brew install tmux`, then `./cookiebot.sh start`
+5. In Telegram, send `/start` to your bot
 
-### Running the controller
+### Daily use (3 things to know)
 
-Run it inside `tmux`, wrapped in `caffeinate -i` so macOS doesn't idle-sleep and drop the connection to Telegram:
+1. `/start` → tap options on the button board (highlighted = ON) → tap **▶️ Start**
+2. `/menu` → buttons for status, logs, screenshot, pause, stop
+3. `/stop` → bot exits, game closes
 
-```bash
-cd /path/to/cookierun-classic-bot
-tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 controller.py"
-```
+The board's Random Boost button expands to 11 named boost buttons — tap one to pick it. Old boards lose their buttons when a new one appears, so only the latest board is tappable.
 
-> **Why `caffeinate -i`?** macOS's idle sleep (default ~15 min) tears down the network connection `controller.py` holds open for Telegram long-polling, which shows up as repeated `Connection reset by peer` / `read operation timed out` errors. `caffeinate -i` blocks idle sleep for as long as this process is running, and releases automatically when it exits.
+<details><summary>Typed flags (power users)</summary>
 
-Shortcut — `cookiebot.sh` wraps the tmux commands below:
-
-```bash
-./cookiebot.sh start      # start controller (no-op if already running)
-./cookiebot.sh stop       # stop controller (also stops the bot it spawned)
-./cookiebot.sh restart    # stop + start (use after editing code)
-./cookiebot.sh status     # controller/bot state + last log lines
-./cookiebot.sh logs       # follow logs/bot.log
-./cookiebot.sh attach     # attach to tmux (detach: Ctrl+b then d)
-```
-
-Managing the session manually:
-
-| Task | Command |
-| --- | --- |
-| Start it (only if not already running) | `tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 controller.py"` |
-| Check it's running | `tmux ls` — should list `cookiebot` |
-| View live output | `tmux attach -t cookiebot` |
-| Detach without stopping it | Press `Ctrl+b` then `d` (do **not** press `Ctrl+d` or type `exit` — that kills the session) |
-| Stop it | `tmux kill-session -t cookiebot` |
-| Restart after a crash/reboot | Run the "Start it" command again — `tmux new -s cookiebot` fails with "session already exists" if it's already up, so check `tmux ls` first |
-
-### Commands
-
-| Command | Effect |
-| --- | --- |
-| `/start` | Opens an inline-button board seeded from the last `/start` flags (or the defaults). Each button toggles Fast Start, Cookie Relay, Relic, and 7 jumps; Random Boost toggles on/off, and while on, 11 named boost buttons appear — tap one to select it (single selection). `▶️ Start` launches with the flags shown on the board. |
-| `/start fs=y\|n cr=y\|n rb=1-11\|n relic=y\|n 7j=y\|n` | Starts immediately with typed flags. Launches CookieRun Classic via ADB if it isn't already running, waits for it to come up, then starts the bot, piping the flags to `main.py`'s interactive prompts. Any flag you omit reuses the value from the last `/start`. |
-| `/menu` | Inline buttons for status, logs (last 30 lines), screenshot, pause, and stop. |
-| `/pause` | Stops bot automation with `SIGINT` but leaves CookieRun Classic open so you can edit your build manually. Wait for the PAUSED confirmation, then use `/start` (and `▶️ Start`) or `/start` with typed flags to restart automation with the saved flags. The game itself keeps running. |
-| `/stop` | Sends `SIGINT` to the bot process — identical to pressing `Ctrl+C` at the terminal. Graceful; the bot exits, then the controller force-stops CookieRun Classic. Also closes the game when the bot is PAUSED. |
-| `/kill` | Sends `SIGKILL`, then force-stops CookieRun Classic. Use only if `/stop` doesn't take effect. |
-| `/status` | RUNNING, PAUSING, PAUSED, or STOPPED. When running, also shows uptime and the last line of `logs/bot.log`. |
-| `/logs [n]` | Last `n` lines of `logs/bot.log` (default 30, max 100). |
-| `/screenshot` | Captures the current BlueStacks screen via ADB and sends it as a photo. Works even if the bot is stopped or stuck, since it captures independently of the bot process. |
-| `/guide` | Explains the `/start` flags and boost numbers, right in the chat. |
-| `/help` | Lists all commands. |
-
-**`/start` flags:**
+`/start fs=y cr=y rb=1 relic=n 7j=y` starts immediately, no board. Omitted flags reuse the last `/start`.
 
 | Flag | Values | Meaning |
 | --- | --- | --- |
-| `fs` | `y` / `n` | Fast Start — buy and use it at the start of the run |
-| `cr` | `y` / `n` | Cookie Relay — buy and use it |
-| `rb` | `1`-`11` / `n` | Desired Random Boost — buy and use it, picking boost number below; `n` skips this power-up entirely |
-| `relic` | `y` / `n` | Detect Relic — open and claim relics when seen |
-| `7j` | `y` / `n` | 7 jumps — tap the jump button seven times at the start of every run |
+| `fs` | `y`/`n` | Fast Start |
+| `cr` | `y`/`n` | Cookie Relay |
+| `rb` | `1`–`11`/`n` | Random Boost number, `n` = off |
+| `relic` | `y`/`n` | Open + claim relics |
+| `7j` | `y`/`n` | 7 jumps at run start |
 
-**`rb` boost numbers** (from `bot.py`'s `BOOST_CHOICES`):
+Boost numbers: 1 Double Coins · 2 +15% Score · 3 −15% HP Drain · 4 Revive 80 HP · 5 70% Crush · 6 +17% Speed · 7 Gold Coin Magic · 8 −30% Collision · 9 +20% Potion HP · 10 Magnetic Aura · 11 2 Pit Lifts
 
-| # | Boost |
+Other commands: `/pause` (bot stops, game stays open), `/kill` (force stop), `/status`, `/logs [n]` (max 100), `/screenshot`, `/guide`, `/help`.
+
+</details>
+
+<details><summary>How the controller runs (tmux + caffeinate)</summary>
+
+`cookiebot.sh` wraps: `tmux new -d -s cookiebot "source .venv/bin/activate && caffeinate -i python3 controller.py"`. `caffeinate -i` stops macOS idle sleep from killing the Telegram long-poll (the `Connection reset by peer` errors). `cookiebot.sh` commands: `start` `stop` `restart` `status` `logs` `attach` (detach: `Ctrl+b` then `d`).
+
+Notes: the controller launches/closes the *game*, not BlueStacks. `/start` waits ~60s for the game to boot before giving up. `/stop` and `/kill` wait 10s/2s for the bot to exit, then force-close the game. `/pause` waits 10s; `/status` shows PAUSING meanwhile.
+
+</details>
+
+## Options the bot asks about
+
+| Option | What it does |
 | --- | --- |
-| 1 | Double Coins |
-| 2 | +15% Score Bonus |
-| 3 | -15% HP Drain |
-| 4 | Revive Once with 80 HP |
-| 5 | 70% Crush Chance |
-| 6 | +17% Base Speed |
-| 7 | Gold Coin Magic |
-| 8 | -30% Collision Damage |
-| 9 | +20% HP from Potions |
-| 10 | Magnetic Aura |
-| 11 | 2 Pit Lifts |
-
-Example:
-```
-/start fs=y cr=y rb=1 relic=n 7j=y
-```
-This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`, `n`, `y` to its prompts (Fast Start, Cookie Relay, Desired Random Boost, boost #1 = Double Coins, Detect Relic, 7 jumps).
-
-Sending `/start` with no flags opens the same choices as buttons instead of launching immediately. The board starts from the saved last-start flags.
-
-The controller confirms with a plain-language summary of the options (✅/❌ per option). The exact flag/stdin sequence is printed in the controller's own output (`cookiebot.sh attach`), and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
-
-> **⚠️ Coupling note:** the `/start` flags map to the *order* of the questions in `prompt_user_options()` (`bot.py`): Fast Start, Cookie Relay, Desired Random Boost (and its number), Detect Relic, then 7 jumps. The `7j` flag answers that last prompt. If those prompts are ever reordered or a new one is added, `controller.py`'s flag mapping needs to be updated to match, or answers will land on the wrong question. Always sanity-check a fresh `/start` against `/logs` after changing `bot.py`'s prompts.
-
-> **App lifecycle notes:**
-> - BlueStacks Air itself must already be running (the controller launches/closes the *game*, not the emulator).
-> - `/start` waits up to ~60s total for CookieRun Classic to launch (15s initial wait + up to 45s polling `pidof`) before giving up and replying with an error — it does **not** start the bot if the app fails to launch.
-> - `/stop`/`/kill` wait briefly (10s / 2s respectively) for the bot process to actually exit before force-stopping the app, so it isn't still mid-tap when the app closes. The app is force-stopped either way, even if the process didn't exit in time.
-> - `/pause` waits up to 10s for the bot to exit. If it takes longer, `/status` shows PAUSING until the process exits. The game stays open throughout. `/start` begins a fresh bot process and scans the current screen; it does not restore the previous Python process state.
-> - This is independent of `bot.py`'s own `device_reset_app()` calls (used internally to recover from crashes/unknown stages while the bot is running) — those are unaffected by this change.
-
-### Typical session from your phone
-
-1. Make sure BlueStacks Air itself is running (the controller launches CookieRun Classic for you, but not the BlueStacks emulator).
-2. On your Mac, confirm the controller is up: `tmux ls` should list `cookiebot`. If not, see [Running the controller](#running-the-controller) above.
-3. In Telegram, open your bot's chat and send `/start` to get the button board, or send typed flags:
-   ```
-   /start fs=y cr=y rb=1 relic=n 7j=y
-   ```
-   Typed flags launch CookieRun Classic (if it isn't already open), wait for it to come up, then start the bot and reply with the pid and the exact stdin sequence sent. On the board, tap options, then `▶️ Start`, for the same launch.
-4. Send `/logs` — confirm you see `✅ Selected: Double Coins` (or whichever boost you picked) and that the bot is progressing through stages.
-5. Send `/screenshot` anytime to see what BlueStacks is currently showing.
-6. Send `/status` to check uptime and the last thing the bot did.
-7. To edit your build, send `/pause`, wait for PAUSED, then make your changes on the laptop. Send `/start` and tap `▶️ Start` (or send `/start` with typed flags) to restart automation using the saved flags. `/menu` is the button form of status, logs, screenshot, pause, and stop.
-8. When you're done, send `/stop` — the bot exits and CookieRun Classic closes. This also closes the game if you are PAUSED. If it doesn't stop, send `/kill`.
-
-## Requirements
-
-- Python 3.x
-- [ADB (Android Debug Bridge)](https://developer.android.com/tools/adb) installed and in your system PATH
-- An Android device or emulator running CookieRun Classic
-- **Device screen resolution must be set to 1280×720**
-
-### Python Dependencies
-
-```
-numpy
-opencv-python
-```
-
-Install via:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Setup
-
-1. **Enable ADB on your device/emulator** and note its IP address and port.
-
-2. **Edit `config.py`** and set your device details at the top:
-
-   ```python
-   DEVICE_IP = "127.0.0.1"    # Your device's IP address
-   DEVICE_PORT = 5555         # Your device's ADB port
-   ```
-
-3. **Ensure templates exist** — the `templates/` folder must contain the following detection images captured at 1280×720:
-
-   **Stage templates:**
-   `MAINMENU_1.png`, `PURCHASE_ITEM_1.png`, `GAME_START_1.png`, `GAME_RELAY_1.png`,
-   `GAME_COMPLETE_1.png`, `MYSTERY_BOX_1.png`, `CONGRATULATIONS_1.png`, `CONGRATULATIONS_2.png`,
-   `LEVEL_UP_1.png`, `RELIC_COMPLETE_1.png`, `RELIC_CLAIM_1.png`, `DAILY_CHECKIN_1.png`,
-   `DAILY_TREASURE_1.png`, `ENTER_LEAGUE_1.png`, `LEAGUE_RESULTS_1.png`,
-   `PREVIOUS_RANK_RESULTS_1.png`, `ANTI_BOT_1.png`, `CONNECTION_LOST_1.png`, `INACTIVE_1.png`
-
-   **Boost templates** (only needed if using Desired Random Boost):
-   `BOOST_DOUBLE_COINS_1.png`, `BOOST_15P_SCORE_BONUS_1.png`, `BOOST_M15P_HP_DRAIN_1.png`,
-   `BOOST_REVIVE_ONCE_WITH_80HP_1.png`, `BOOST_70P_CRUSH_CHANCE_1.png`, `BOOST_17P_BASE_SPEED_1.png`,
-   `BOOST_GOLD_COIN_MAGIC_1.png`, `BOOST_M30P_COLLISION_DAMAGE_1.png`, `BOOST_20P_HP_FROM_POTIONS_1.png`,
-   `BOOST_MAGNETIC_AURA_1.png`, `BOOST_2PIT_LIFTS_1.png`
-
-## Usage
-
-```bash
-python main.py
-```
-
-On startup, the bot will:
-
-1. Connect to your ADB device
-2. Prompt you to configure options:
-   - **Fast Start**: auto-buy and use the Fast Start item each round
-   - **Cookie Relay**: auto-buy and use the Cookie Relay item each round
-   - **Desired Random Boost**: auto-buy a specific boost each round (choose from 11 options)
-   - **7 jumps**: tap the jump button seven times at the start of each run
-3. Begin the automation loop
-
-## Project Structure
-
-```
-cookierun-classic-bot/
-├── main.py              # Entry point
-├── bot.py               # Main bot logic and game loop
-├── actions.py           # Tap/action handlers for each stage
-├── adb.py               # ADB connection and screen capture
-├── alerts.py            # Telegram alert notifications
-├── config.py            # Device config, thresholds, and template paths
-├── controller.py        # Optional Telegram remote control (start/stop/status/logs/screenshot)
-├── detection.py         # OpenCV template matching logic
-├── debug.py             # Debug screen saving utility
-├── env.py               # .env file loader
-├── requirements.txt     # Python dependencies
-├── templates/           # Stage detection template images
-├── tests/               # Unit tests
-├── debug_screens/       # Saved debug screenshots (auto-created)
-└── logs/                # Bot log + controller state (auto-created, gitignored)
-```
-
-## Configuration
-
-All constants are defined in `config.py`.
-
-| Constant                 | Default         | Description                                             |
-| ------------------------ | --------------- | ------------------------------------------------------- |
-| `DEVICE_IP`              | `127.0.0.1`     | ADB device IP address                                   |
-| `DEVICE_PORT`            | `5555`          | ADB device port                                         |
-| `MATCH_THRESHOLD`        | `0.8`           | Minimum confidence for template match (0.0–1.0)         |
-| `TEMPLATE_DIR`           | `templates`     | Folder containing stage detection images                |
-| `SESSION_RESET_INTERVAL` | `(5400, 10800)` | Random interval in seconds (1.5–3 h) before app restart |
-| `LIVES_INTERVAL`         | `(10800, 21600)` | Random interval in seconds (3–6 h) before the mailbox receive-and-send-all lives check |
-| `MAX_UNKNOWN_STAGE_RESTARTS` | `3`         | Consecutive stage-unknown app restarts before the bot gives up and stops |
-| `TELEGRAM_BOT_TOKEN`     | (empty)         | Bot token from [@BotFather](https://t.me/BotFather), used for both alerts and remote control |
-| `TELEGRAM_CHAT_ID`       | (empty)         | Chat id that crash/stuck alerts (`alerts.py`) are sent to |
-| `TELEGRAM_ALLOWED_USER_IDS` | (empty)      | Comma-separated Telegram user ids allowed to use `controller.py` — see [Remote Control via Telegram](#remote-control-via-telegram-optional) |
-
-You can also limit specific stage detection to a fixed screen region with `(x1, y1, x2, y2)` bounds. Each stage has a corresponding `STAGE_<NAME>_REGION` constant in `config.py` that restricts template matching to a sub-region of the screen, which speeds up detection.
-
-## How It Works
-
-1. The bot captures a screenshot via ADB approximately every 0.25 seconds.
-2. It uses OpenCV's `matchTemplate` to compare the screen against known stage images within pre-defined screen regions.
-3. Stage detection is split into `PRE_GAME`, `IN_GAME`, and `POST_GAME` groups so each loop checks only the stages relevant to the current flow. `CONNECTION_LOST` and `INACTIVE` are always checked regardless of group.
-4. If grouped detection misses repeatedly (configurable timeout per group), the bot automatically falls back to a full stage scan to recover.
-5. When a stage is detected, the corresponding action is performed (tapping buttons with randomized coordinate jitter and delays).
-6. **Anti-bot challenge**: when the anti-bot card screen is detected, the bot identifies the odd card out from a set of six using template matching and taps it.
-7. **Session reset**: after a random interval of 1.5–3 hours, the bot restarts the CookieRun app to reduce long-session detection risk. The restart does not send lives.
-8. **Lives**: on the main menu, every 3–6 hours, the bot opens the mailbox Lives tab and uses one-click receive and send-all.
-9. The loop continues until the process is manually stopped (`Ctrl+C`).
-
-## Debugging
-
-To capture and save a screenshot for troubleshooting template matching, call `save_debug_screen()` from `debug.py`:
-
-```python
-from adb import device_capture_screen
-from config import DEVICE_IP, DEVICE_PORT
-from debug import save_debug_screen
-
-device_screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
-save_debug_screen(device_screen)
-```
-
-Saved screenshots will appear in the `debug_screens/` folder with a timestamp.
+| Fast Start | Buys + uses Fast Start every run |
+| Cookie Relay | Buys + uses Cookie Relay every run |
+| Random Boost | Buys your chosen boost (of 11) every run |
+| Detect Relic | Opens + claims relic chests |
+| 7 jumps | Taps jump 7× (0.6–0.9s apart) at each run start |
 
 ## Troubleshooting
 
-- **Stage not detected**: Save a debug screenshot and compare it against the template images. You may need to recapture templates at the correct resolution.
-- **ADB connection failed**: Verify ADB is in your PATH and the device is reachable (`adb devices`).
-- **Wrong tap coordinates**: All coordinates are calibrated for **1280×720**. Ensure your emulator/device is set to this resolution.
-- **`/start` answers land on the wrong prompt**: `controller.py`'s flags assume the exact question order in `prompt_user_options()` (`bot.py`). Check `/logs` for the `✅ Selected: <boost>` confirmation after starting; if it's missing or wrong, the prompts may have changed since the mapping was written.
-- **Controller refuses to start**: `TELEGRAM_ALLOWED_USER_IDS` must be non-empty in `.env`. This is intentional — it prevents a leaked bot token from giving a stranger control of your Mac.
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Stage not detected | Template mismatch | Save a debug screen (`debug.py`), recapture the template at 1280×720 |
+| Wrong taps | Not 1280×720 | Set emulator resolution to 1280×720 |
+| ADB failed | Device not reachable | `adb devices`; `adb connect 127.0.0.1:5555` |
+| `/start` answers wrong prompts | Prompt order changed in `bot.py` | Update `flags_to_answers()` in `controller.py` to match (see coupling note) |
+| Controller won't start | Empty allowlist | Set `TELEGRAM_ALLOWED_USER_IDS` in `.env` |
+
+> **Coupling note:** `/start` flags map to the *order* of prompts in `prompt_user_options()` (`bot.py`): Fast Start, Cookie Relay, Random Boost (+ number), Relic, then 7 jumps. Change the prompts → update `flags_to_answers()` in `controller.py`. Verify with `/logs`: look for `✅ Selected: <boost>`.
+
+## Config (`config.py`)
+
+| Constant | Default | Meaning |
+| --- | --- | --- |
+| `DEVICE_IP` / `DEVICE_PORT` | `127.0.0.1` / `5555` | Your emulator's ADB address |
+| `MATCH_THRESHOLD` | `0.8` | Template match confidence (0–1) |
+| `SESSION_RESET_INTERVAL` | `(5400, 10800)` | App restart every 1.5–3 h |
+| `LIVES_INTERVAL` | `(10800, 21600)` | Mailbox lives check every 3–6 h |
+| `MAX_UNKNOWN_STAGE_RESTARTS` | `3` | Restarts before the bot gives up and alerts you |
+
+Telegram keys (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS`) load from `.env`. Each stage's detection region has a `STAGE_<NAME>_REGION` constant you can tune.
+
+<details><summary>How it works, project layout, template list, debugging</summary>
+
+**Loop:** screenshot every 0.25s → `matchTemplate` against stage images (grouped PRE_GAME / IN_GAME / POST_GAME) → tap the matching button with human-like jitter. Full-scan fallback if grouped detection keeps missing.
+
+```
+main.py        # entry
+bot.py         # game loop + option prompts
+actions.py     # tap handlers per stage
+controller.py  # Telegram remote control
+detection.py   # template matching
+adb.py         # ADB + screen capture
+config.py      # all constants
+alerts.py      # Telegram crash alerts
+templates/     # detection images (1280×720)
+tests/         # unit tests (python3 -m pytest tests/)
+```
+
+Templates are committed. If a game update changes a screen, recapture that template at 1280×720.
+
+**Debug a screen:** `save_debug_screen(device_capture_screen(DEVICE_IP, DEVICE_PORT))` from `debug.py` → saved to `debug_screens/`.
+
+</details>
