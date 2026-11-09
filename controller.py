@@ -344,14 +344,15 @@ def board_keyboard(flags):
         ("relic", "🏺 Relic"),
         ("7j", "🐇 7 Jumps"),
     ):
-        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}"}])
-    rows.append([{"text": f"🎲 Random Boost: {rb_label(flags['rb'])}", "callback_data": "toggle:rb"}])
+        rows.append([{"text": f"{label}: {_yn_mark(flags[key])}", "callback_data": f"toggle:{key}", "style": "primary"}])
+    rows.append([{"text": f"🎲 Random Boost: {rb_label(flags['rb'])}", "callback_data": "toggle:rb", "style": "primary"}])
     if flags["rb"] != "n":
-        # Boost picker: radio-style, exactly one selected.
+        # Boost picker: radio-style, exactly one selected; bulleted so the
+        # rows read as a nested list under the main Random Boost button.
         for i, name in enumerate(BOOST_NAMES, 1):
-            mark = "✅ " if flags["rb"] == str(i) else ""
+            mark = "✅ " if flags["rb"] == str(i) else "▫️ "
             rows.append([{"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}])
-    rows.append([{"text": "▶️ Start", "callback_data": "board:start"}])
+    rows.append([{"text": "▶️ Start", "callback_data": "board:start", "style": "success"}])
     return {"inline_keyboard": rows}
 
 

@@ -544,9 +544,20 @@ class InlineBoardTests(unittest.TestCase):
         picker = labels[5:16]
         self.assertEqual(len(picker), controller.BOOST_COUNT)
         self.assertEqual(picker[2], "✅ -15% HP Drain")
-        self.assertEqual(picker[0], "Double Coins")
+        self.assertEqual(picker[0], "▫️ Double Coins")
         self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
         self.assertEqual(labels[16:], ["▶️ Start"])
+
+    def test_board_button_styles_distinguish_groups(self):
+        flags = {"fs": "n", "cr": "n", "rb": "1", "relic": "n", "7j": "n"}
+        buttons = [b for row in controller.board_keyboard(flags)["inline_keyboard"] for b in row]
+        by_callback = {b["callback_data"]: b for b in buttons}
+        for key in ("fs", "cr", "relic", "7j"):
+            self.assertEqual(by_callback[f"toggle:{key}"].get("style"), "primary")
+        self.assertEqual(by_callback["toggle:rb"].get("style"), "primary")
+        self.assertEqual(by_callback["board:start"].get("style"), "success")
+        for i in range(1, controller.BOOST_COUNT + 1):
+            self.assertNotIn("style", by_callback[f"setrb:{i}"])
 
     def test_board_keyboard_hides_picker_when_rb_off(self):
         flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
@@ -648,7 +659,7 @@ class InlineBoardTests(unittest.TestCase):
             labels = _button_labels(edit.call_args.kwargs["reply_markup"])
             self.assertIn("🎲 Random Boost: ❌", labels)
             self.assertNotIn("✅ Double Coins", labels)
-            self.assertNotIn("+15% Score Bonus", labels)
+            self.assertNotIn("▫️ +15% Score Bonus", labels)
 
     def test_setrb_selects_exactly_one_boost(self):
         c = controller.Controller()
