@@ -165,7 +165,7 @@ This is equivalent to running `python3 main.py` and answering `y`, `y`, `y`, `1`
 
 Sending `/start` with no flags opens the same choices as buttons instead of launching immediately. The board starts from the saved last-start flags.
 
-The controller replies with the exact answer sequence it sent, and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
+The controller confirms with a plain-language summary of the options (✅/❌ per option). The exact flag/stdin sequence is printed in the controller's own output (`cookiebot.sh attach`), and you can double-check it landed on the right prompts by running `/logs` and looking for the `✅ Selected: <boost name>` line.
 
 > **⚠️ Coupling note:** the `/start` flags map to the *order* of the questions in `prompt_user_options()` (`bot.py`): Fast Start, Cookie Relay, Desired Random Boost (and its number), Detect Relic, then 7 jumps. The `7j` flag answers that last prompt. If those prompts are ever reordered or a new one is added, `controller.py`'s flag mapping needs to be updated to match, or answers will land on the wrong question. Always sanity-check a fresh `/start` against `/logs` after changing `bot.py`'s prompts.
 

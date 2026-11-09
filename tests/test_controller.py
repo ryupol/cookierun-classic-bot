@@ -569,6 +569,18 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(sum(1 for label in picker if label.startswith("✅")), 1)
         self.assertEqual(labels[16:], ["▶️ Start"])
 
+    def test_flags_summary_is_human_readable(self):
+        flags = {"fs": "y", "cr": "n", "rb": "1", "relic": "n", "7j": "y"}
+        text = controller.flags_summary(flags)
+        self.assertIn("⚡ Fast Start ✅", text)
+        self.assertIn("🍪 Cookie Relay ❌", text)
+        self.assertIn("🏺 Relic ❌", text)
+        self.assertIn("🐇 7 Jumps ✅", text)
+        self.assertIn("🎲 Random Boost: Double Coins ✅", text)
+        self.assertNotIn("fs=", text)
+        flags["rb"] = "n"
+        self.assertIn("🎲 Random Boost ❌", controller.flags_summary(flags))
+
     def test_board_packs_two_buttons_per_row(self):
         flags = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
         rows = controller.board_keyboard(flags)["inline_keyboard"]

@@ -315,6 +315,23 @@ def rb_label(value):
     return ""
 
 
+def flags_summary(flags):
+    """Human-readable option states for the ▶️ Started confirmation."""
+    def mark(value):
+        return "✅" if value == "y" else "❌"
+
+    lines = [
+        f"⚡ Fast Start {mark(flags['fs'])}   🍪 Cookie Relay {mark(flags['cr'])}",
+        f"🏺 Relic {mark(flags['relic'])}   🐇 7 Jumps {mark(flags['7j'])}",
+    ]
+    rb = flags["rb"]
+    if rb.isdigit() and 1 <= int(rb) <= BOOST_COUNT:
+        lines.append(f"🎲 Random Boost: {BOOST_NAMES[int(rb) - 1]} ✅")
+    else:
+        lines.append("🎲 Random Boost ❌")
+    return "\n".join(lines)
+
+
 def board_text(flags):
     # Static by design: per-tap refreshes edit only the button markup, so
     # the message text never flickers. Button highlight carries the state.
@@ -554,11 +571,14 @@ def _launch_with_flags(controller, chat_id, flags):
     controller.bot.start(flags)
     controller.last_known_alive = True
     controller.paused = False
+    # Flag/stdin jargon stays in the controller log (useful for the prompt
+    # coupling check); the Telegram reply speaks plain language.
     flag_str = " ".join(f"{k}={v}" for k, v in flags.items())
     answers_str = " ".join(flags_to_answers(flags))
+    print(f"🚦 /start flags: {flag_str}  →  stdin: {answers_str}")
     send_message(
         chat_id,
-        f"▶️ Started (pid {controller.bot.proc.pid})\n{flag_str}  →  stdin: {answers_str}",
+        f"▶️ Started (pid {controller.bot.proc.pid})\n{flags_summary(flags)}",
     )
 
 
