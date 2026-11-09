@@ -23,8 +23,8 @@ from actions import (
     handle_anti_bot,
     handle_failed_to_retrieve_data,
     handle_inactive,
+    do_opening_jumps,
     handle_quick_receive_and_send_lives,
-    handle_send_friend_life,
     open_relic_complete,
     play_game,
     purchase_cookie_relay,
@@ -55,6 +55,7 @@ from config import (
     SESSION_RESET_INTERVAL,
     LIVES_INTERVAL,
     MAX_FAILED_TO_RETRIEVE_DATA_RETRIES,
+    MAX_GAME_COMPLETE_RETRIES,
     MAX_UNKNOWN_STAGE_RESTARTS,
     UNKNOWN_STAGE_RESET_TIMEOUT,
 )
@@ -127,6 +128,7 @@ def prompt_user_options():
                 break
             print(f"  ⚠️ Please enter a number between 1 and {len(BOOST_CHOICES)}.")
     detect_relic = input("🏺 Detect Relic (open + claim)? [y/n]: ").strip().lower() == "y"
+    use_opening_jumps = input("🐇 7 jumps at run start? [y/n]: ").strip().lower() == "y"
     print("---------------------")
 
     return {
@@ -136,6 +138,7 @@ def prompt_user_options():
         "desired_boost_template": desired_boost_template,
         "desired_boost_name": desired_boost_name if use_desired_random_boost else None,
         "detect_relic": detect_relic,
+        "use_opening_jumps": use_opening_jumps,
     }
 
 
@@ -166,14 +169,20 @@ def main():
         session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
         last_lives_time = time.time()
         lives_interval = random.uniform(*LIVES_INTERVAL)
-        pending_send_friend_life = False
         unknown_stage_since = None
         unknown_restart_count = 0
         data_retry_count = 0
+        game_complete_retry_count = 0
+        first_detection = True
 
         while True:
             device_screen = device_capture_screen(DEVICE_IP, DEVICE_PORT)
-            stage = detect_stage(device_screen, get_detection_stage_names(detection_group, exclude=relic_exclude))
+            if first_detection:
+                # A fresh process may attach to a game left open by /pause.
+                stage = detect_stage(device_screen, exclude=relic_exclude)
+                first_detection = False
+            else:
+                stage = detect_stage(device_screen, get_detection_stage_names(detection_group, exclude=relic_exclude))
             if stage is None:
                 if time.time() - last_detected_time >= DETECTION_RECOVERY_SCAN_INTERVAL[detection_group]:
                     stage = detect_stage(device_screen, exclude=relic_exclude)
@@ -207,7 +216,6 @@ def main():
                     session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
                     last_lives_time = time.time()
                     lives_interval = random.uniform(*LIVES_INTERVAL)
-                    pending_send_friend_life = False
                     detection_group = "PRE_GAME"
                     last_detected_time = time.time()
                     last_stage = None
@@ -219,6 +227,8 @@ def main():
                 unknown_restart_count = 0
                 if stage != "FAILED_TO_RETRIEVE_DATA":
                     data_retry_count = 0
+                if stage != "GAME_COMPLETE":
+                    game_complete_retry_count = 0
 
             if stage == last_stage:
                 time.sleep(0.1)
@@ -231,21 +241,12 @@ def main():
                 # Wait screen refresh
                 print("⏳ Waiting 3 seconds for screen refresh...")
                 time.sleep(3)
-                if pending_send_friend_life:
-                    print("💌 Sending friend lives after app reset...")
-                    if not handle_send_friend_life():
-                        print("⚠️ Send-life flow gave up — leaving it to the idle-stage restart if the screen is stuck.")
-                    pending_send_friend_life = False
-                    last_lives_time = time.time()
-                    last_stage = None
-                    continue
                 elapsed = time.time() - session_start_time
                 if elapsed >= session_reset_interval:
                     print(f"🔄 Session reset triggered after {elapsed / 3600:.2f}h — restarting app...")
                     device_reset_app(DEVICE_IP, DEVICE_PORT)
                     time.sleep(5)
                     close_announcement_dialog()
-                    pending_send_friend_life = True
                     session_start_time = time.time()
                     session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
                     last_lives_time = time.time()
@@ -256,7 +257,7 @@ def main():
                     continue
                 lives_elapsed = time.time() - last_lives_time
                 if lives_elapsed >= lives_interval:
-                    print(f"💌 ~30 min passed ({lives_elapsed / 60:.1f} min) — receiving and sending lives...")
+                    print(f"💌 Lives interval reached ({lives_elapsed / 3600:.2f}h) — receiving and sending lives...")
                     handle_quick_receive_and_send_lives()
                     last_lives_time = time.time()
                     lives_interval = random.uniform(*LIVES_INTERVAL)
@@ -289,6 +290,8 @@ def main():
                 print("🏁 Detected Stage: GAME_START")
                 if options["use_fast_start"]:
                     using_fast_start()
+                if options["use_opening_jumps"]:
+                    do_opening_jumps()
                 detection_group = "IN_GAME"
             elif stage == "GAME_RELAY":
                 print("🔄 Detected Stage: GAME_RELAY")
@@ -296,9 +299,26 @@ def main():
                     using_cookie_relay()
                 detection_group = "IN_GAME"
             elif stage == "GAME_COMPLETE":
-                print("✅ Detected Stage: GAME_COMPLETE")
-                complete_finish()
-                detection_group = "POST_GAME"
+                game_complete_retry_count += 1
+                print(f"✅ Detected Stage: GAME_COMPLETE (attempt {game_complete_retry_count}/{MAX_GAME_COMPLETE_RETRIES})")
+                if game_complete_retry_count >= MAX_GAME_COMPLETE_RETRIES:
+                    print(f"❌ GAME_COMPLETE kept reappearing after {MAX_GAME_COMPLETE_RETRIES} Finish taps. Forcing full app restart...")
+                    save_debug_screen(device_screen)
+                    device_reset_app(DEVICE_IP, DEVICE_PORT)
+                    time.sleep(5)
+                    close_announcement_dialog()
+                    session_start_time = time.time()
+                    session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
+                    last_lives_time = time.time()
+                    lives_interval = random.uniform(*LIVES_INTERVAL)
+                    detection_group = "PRE_GAME"
+                    last_detected_time = time.time()
+                    is_first_game = True
+                    game_complete_retry_count = 0
+                else:
+                    complete_finish()
+                    detection_group = "POST_GAME"
+                last_stage = None
             elif stage == "MYSTERY_BOX":
                 print("🎁 Detected Stage: MYSTERY_BOX")
                 accept_mystery_box()
@@ -393,7 +413,6 @@ def main():
                     session_reset_interval = random.uniform(*SESSION_RESET_INTERVAL)
                     last_lives_time = time.time()
                     lives_interval = random.uniform(*LIVES_INTERVAL)
-                    pending_send_friend_life = False
                     detection_group = "PRE_GAME"
                     last_detected_time = time.time()
                     is_first_game = True
