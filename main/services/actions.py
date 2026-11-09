@@ -1,7 +1,7 @@
 import random
 import time
 
-from adb import safe_device_tap, device_capture_screen
+from .adb import safe_device_tap, device_capture_screen
 from config import (
     ACCEPT_ALL_LIVES_RECEIVED_AND_SENT_BUTTON,
     ACCEPT_CONGRATULATIONS_BUTTON,
@@ -63,7 +63,7 @@ from config import (
     CONNECTION_LOST_RELOAD_BUTTON,
     FAILED_TO_RETRIEVE_DATA_CONFIRM_BUTTON,
 )
-from detection import detect_templates, detect_anti_bot_odd_cards, detect_stage
+from .detection import detect_templates, detect_anti_bot_odd_cards, detect_stage
 from config import (
     ANTI_BOT_CARD_POS_1, ANTI_BOT_CARD_POS_2, ANTI_BOT_CARD_POS_3,
     ANTI_BOT_CARD_POS_4, ANTI_BOT_CARD_POS_5, ANTI_BOT_CARD_POS_6,
@@ -141,7 +141,7 @@ def do_opening_jumps(count=7):
         print(f"🐇 Jump {i}/{count}")
         safe_device_tap(DEVICE_IP, DEVICE_PORT, JUMP_BUTTON[0], JUMP_BUTTON[1])
         if i < count:
-            time.sleep(random.uniform(0.6, 0.9))  # spaced like 7 deliberate single jumps
+            time.sleep(random.uniform(0.5, 0.7))  # spaced like 7 deliberate single jumps
 
 
 def using_cookie_relay():

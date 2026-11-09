@@ -1,14 +1,14 @@
 import unittest
 from unittest.mock import patch
 
-import actions
+import services.actions as actions
 import config
 
 
 class RecoverFriendOverlayTests(unittest.TestCase):
-    @patch("actions.time.sleep")
-    @patch("actions.safe_device_tap")
-    @patch("actions.detect_templates")
+    @patch("services.actions.time.sleep")
+    @patch("services.actions.safe_device_tap")
+    @patch("services.actions.detect_templates")
     def test_closes_friend_cookie_before_friend_info(self, detect_templates, tap, _sleep):
         detect_templates.side_effect = lambda _screen, templates, _region: (
             [(500, 25, 285, 65)]
@@ -26,9 +26,9 @@ class RecoverFriendOverlayTests(unittest.TestCase):
             actions.FRIEND_COOKIE_DIALOG_CLOSE_BUTTON[1],
         )
 
-    @patch("actions.time.sleep")
-    @patch("actions.safe_device_tap")
-    @patch("actions.detect_templates")
+    @patch("services.actions.time.sleep")
+    @patch("services.actions.safe_device_tap")
+    @patch("services.actions.detect_templates")
     def test_cancels_leftover_send_confirmation(self, detect_templates, tap, _sleep):
         detect_templates.side_effect = lambda _screen, templates, region: (
             [(505, 305, 275, 50)]
@@ -49,8 +49,8 @@ class RecoverFriendOverlayTests(unittest.TestCase):
 
 
 class OpeningJumpsTests(unittest.TestCase):
-    @patch("actions.time.sleep")
-    @patch("actions.safe_device_tap")
+    @patch("services.actions.time.sleep")
+    @patch("services.actions.safe_device_tap")
     def test_taps_jump_button_seven_times(self, tap, sleep):
         actions.do_opening_jumps()
 
@@ -62,17 +62,17 @@ class OpeningJumpsTests(unittest.TestCase):
             )
         self.assertEqual(sleep.call_count, 6)
         for slept in sleep.call_args_list:
-            self.assertTrue(0.6 <= slept.args[0] <= 0.9)
+            self.assertTrue(0.5 <= slept.args[0] <= 0.7)
 
 
 class QuickReceiveAndSendLivesTests(unittest.TestCase):
     def _points(self, tap):
         return [(c.args[2], c.args[3]) for c in tap.call_args_list]
 
-    @patch("actions.time.sleep")
-    @patch("actions.safe_device_tap")
-    @patch("actions.device_capture_screen", return_value=object())
-    @patch("actions.detect_templates")
+    @patch("services.actions.time.sleep")
+    @patch("services.actions.safe_device_tap")
+    @patch("services.actions.device_capture_screen", return_value=object())
+    @patch("services.actions.detect_templates")
     def test_no_lives_closes_mail_without_quick_send(self, detect_templates, _capture, tap, _sleep):
         detect_templates.side_effect = (
             lambda _screen, templates, _region: templates == actions.NO_LIVES_TO_RECEIVE_TEMPLATE
@@ -91,10 +91,10 @@ class QuickReceiveAndSendLivesTests(unittest.TestCase):
         )
         self.assertNotIn(config.CONFIRM_SEND_LIFE_BUTTON, points)
 
-    @patch("actions.time.sleep")
-    @patch("actions.safe_device_tap")
-    @patch("actions.device_capture_screen", return_value=object())
-    @patch("actions.detect_templates")
+    @patch("services.actions.time.sleep")
+    @patch("services.actions.safe_device_tap")
+    @patch("services.actions.device_capture_screen", return_value=object())
+    @patch("services.actions.detect_templates")
     def test_lives_present_clicks_once_then_confirms_and_closes(self, detect_templates, _capture, tap, _sleep):
         def detect(_screen, templates, _region):
             if templates == actions.NO_LIVES_TO_RECEIVE_TEMPLATE:

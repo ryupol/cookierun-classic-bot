@@ -1,14 +1,11 @@
-import os
-
-from env import load_env
-
-load_env()
+"""Static tuning data for the bot: thresholds, intervals, templates,
+regions, and on-screen coordinates. Environment-specific settings (device
+address, Telegram credentials) are NOT here — those are built by
+config/factory.py via get_settings()."""
 
 # -------------------
 # CONFIG
 # -------------------
-DEVICE_IP = "127.0.0.1"      # Change to your adb device's IP address
-DEVICE_PORT = 5555           # Change to your adb device's port number
 TEMPLATE_DIR = "templates"
 MATCH_THRESHOLD = 0.8
 SESSION_RESET_INTERVAL = (5400, 10800)  # 1.5-3 hours
@@ -29,36 +26,13 @@ MAX_FAILED_TO_RETRIEVE_DATA_RETRIES = 3  # after this many Confirm taps, force a
 MAX_GAME_COMPLETE_RETRIES = 3  # after this many Finish taps, force a full app restart instead (screen can get stuck here)
 
 # -------------------
-# ALERTS (Telegram)
-# -------------------
-# Create a bot via @BotFather to get a token, and message it once so you can
-# find your chat_id (e.g. via https://api.telegram.org/bot<token>/getUpdates).
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-
-# Comma-separated Telegram numeric user IDs allowed to control the bot via
-# controller.py (e.g. "111111111,222222222"). Message @userinfobot on
-# Telegram to find your own user id. Leave empty to disable remote control.
-TELEGRAM_ALLOWED_USER_IDS = {
-    int(uid) for uid in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if uid.strip()
-}
-
-# -------------------
 # STAGE DETECTION TEMPLATES
 # -------------------
-# MAINMENU_2/3 ("League Results" header) and MAINMENU_4 ("Previous Rank
-# Results" header) are intentionally detected as MAINMENU per user decision —
-# those result screens are treated as the lobby in the current game patch.
-# NOTE: these crops score ~0.4 on real 1280x720 emulator frames (different
-# source scale) so they effectively never match; working templates need
-# re-cropping from real frames of those screens (tracked in
-# tmp/checkpoint/bot-qol-improvements/state.md).
-STAGE_MAINMENU_TEMPLATE = [
-    "MAINMENU_1.png",
-    "MAINMENU_2.png",
-    "MAINMENU_3.png",
-    "MAINMENU_4.png",
-]
+# NOTE: MAINMENU_1 is a legacy crop from a different source scale; measured
+# on real 1280x720 frames it scores ~0.35, below the 0.8 threshold, so it
+# effectively never matches. A working template needs re-cropping from a real
+# frame of the lobby (tracked in tmp/checkpoint/bot-qol-improvements/state.md).
+STAGE_MAINMENU_TEMPLATE = ["MAINMENU_1.png"]
 STAGE_PURCHASE_ITEM_TEMPLATE = ["PURCHASE_ITEM_1.png"]
 STAGE_GAME_START_TEMPLATE = ["GAME_START_1.png"]
 STAGE_GAME_RELAY_TEMPLATE = ["GAME_RELAY_1.png"]

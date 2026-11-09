@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start/stop the Telegram controller (controller.py) in a detached tmux session.
+# Start/stop the Telegram controller (python -m controller) in a detached tmux session.
 #
 #   ./cookiebot.sh start      start controller (no-op if already running)
 #   ./cookiebot.sh stop       stop controller (also stops the bot it spawned)
@@ -30,13 +30,15 @@ cmd_start() {
   [ -x "$PY" ] || { echo "❌ $PY missing. Create the venv first (see README)."; exit 1; }
   [ -f "$DIR/.env" ] || { echo "❌ $DIR/.env missing. Copy .env.example and fill it in."; exit 1; }
   # caffeinate -i: block idle sleep so Telegram long-polling doesn't drop.
-  tmux new -d -s "$SESSION" -c "$DIR" "caffeinate -i '$PY' controller.py"
+  # PYTHONPATH: components live under main/ (src-layout); cwd stays at the
+  # repo root so .env, logs/, and templates/ resolve as before.
+  tmux new -d -s "$SESSION" -c "$DIR" "PYTHONPATH='$DIR/main' PYTHONDONTWRITEBYTECODE=1 caffeinate -i '$PY' -m controller"
   sleep 2
   if is_up; then
     echo "✅ Started. Send /start in Telegram."
   else
     echo "❌ Controller exited right away. Run it in the foreground to see why:"
-    echo "   cd '$DIR' && .venv/bin/python3 controller.py"
+    echo "   cd '$DIR' && PYTHONPATH=main .venv/bin/python3 -m controller"
     exit 1
   fi
 }
@@ -47,15 +49,15 @@ cmd_stop() {
     echo "ℹ️  Not running."
     return
   fi
-  # kill-session sends SIGHUP; controller.py stops its bot child on SIGHUP.
+  # kill-session sends SIGHUP; the controller stops its bot child on SIGHUP.
   tmux kill-session -t "$SESSION"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    pgrep -f "caffeinate -i $PY controller.py" >/dev/null 2>&1 || break
+    pgrep -f "caffeinate -i $PY -m controller" >/dev/null 2>&1 || break
     sleep 1
   done
   echo "🛑 Stopped controller."
-  if pgrep -f "$PY -u main.py" >/dev/null 2>&1; then
-    echo "⚠️  A bot process (main.py) is still alive. Kill it: pkill -f '$PY -u main.py'"
+  if pgrep -f "$PY -u -m bot" >/dev/null 2>&1; then
+    echo "⚠️  A bot process (python -m bot) is still alive. Kill it: pkill -f '$PY -u -m bot'"
   fi
 }
 
@@ -66,10 +68,10 @@ cmd_status() {
   else
     echo "🔴 Controller not running. Start: $0 start"
   fi
-  if pgrep -f "$PY -u main.py" >/dev/null 2>&1; then
-    echo "🟢 Bot (main.py) running."
+  if pgrep -f "$PY -u -m bot" >/dev/null 2>&1; then
+    echo "🟢 Bot (python -m bot) running."
   else
-    echo "⚪ Bot (main.py) not running."
+    echo "⚪ Bot (python -m bot) not running."
   fi
   if [ -f "$BOT_LOG" ]; then
     echo "--- last 5 bot.log lines ---"

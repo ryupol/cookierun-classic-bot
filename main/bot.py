@@ -1,9 +1,9 @@
 import random
 import time
 
-from adb import device_capture_screen, device_connect, device_reset_app, device_tap
-from alerts import send_telegram_alert
-from actions import (
+from services.adb import device_capture_screen, device_connect, device_reset_app, device_tap
+from services.alerts import send_telegram_alert
+from services.actions import (
     accept_congratulations,
     accept_daily_checkin,
     accept_daily_checkin_boost_set,
@@ -59,8 +59,8 @@ from config import (
     MAX_UNKNOWN_STAGE_RESTARTS,
     UNKNOWN_STAGE_RESET_TIMEOUT,
 )
-from detection import detect_stage, load_templates
-from debug import save_debug_screen
+from services.detection import detect_stage, load_templates
+from services.debug import save_debug_screen
 
 # -------------------
 # BOT OPTIONS
@@ -430,3 +430,20 @@ def main():
     except Exception as e:
         print(f"❌ An error occurred: {e}")
         send_telegram_alert(f"❌ CookieRun bot crashed: {e}")
+
+
+if __name__ == "__main__":
+    # Entry point (python -m bot): timestamp every log line, then run.
+    # Guarded so importing bot (e.g. the controller reading BOOST_CHOICES)
+    # has no side effects.
+    import builtins
+    from datetime import datetime
+
+    _original_print = builtins.print
+
+    def _print_with_datetime(*args, **kwargs):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _original_print(f"[{timestamp}]", *args, **kwargs)
+
+    builtins.print = _print_with_datetime
+    main()

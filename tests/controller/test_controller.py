@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-import controller
+import controller.app as controller
+from controller.repositories import last_start, logs
 
 
 class SendCodeMessageTests(unittest.TestCase):
@@ -121,14 +122,14 @@ class FlagParsingTests(unittest.TestCase):
 class LastStartPersistenceTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._orig_log_dir = controller.LOG_DIR
-        self._orig_last_start = controller.LAST_START_FILE
-        controller.LOG_DIR = self._tmpdir.name
-        controller.LAST_START_FILE = os.path.join(self._tmpdir.name, "last_start.json")
+        self._orig_log_dir = last_start.LOG_DIR
+        self._orig_last_start = last_start.LAST_START_FILE
+        last_start.LOG_DIR = self._tmpdir.name
+        last_start.LAST_START_FILE = os.path.join(self._tmpdir.name, "last_start.json")
 
     def tearDown(self):
-        controller.LOG_DIR = self._orig_log_dir
-        controller.LAST_START_FILE = self._orig_last_start
+        last_start.LOG_DIR = self._orig_log_dir
+        last_start.LAST_START_FILE = self._orig_last_start
         self._tmpdir.cleanup()
 
     def test_save_and_load_round_trip(self):
@@ -141,8 +142,8 @@ class LastStartPersistenceTests(unittest.TestCase):
         self.assertIsNone(controller._load_last_start())
 
     def test_load_returns_none_on_corrupt_json(self):
-        os.makedirs(controller.LOG_DIR, exist_ok=True)
-        with open(controller.LAST_START_FILE, "w") as f:
+        os.makedirs(last_start.LOG_DIR, exist_ok=True)
+        with open(last_start.LAST_START_FILE, "w") as f:
             f.write("{not valid json")
         self.assertIsNone(controller._load_last_start())
 
@@ -150,38 +151,38 @@ class LastStartPersistenceTests(unittest.TestCase):
 class LogTailTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._orig_log_dir = controller.LOG_DIR
-        self._orig_log_file = controller.LOG_FILE
-        self._orig_log_file_prev = controller.LOG_FILE_PREV
-        controller.LOG_DIR = self._tmpdir.name
-        controller.LOG_FILE = os.path.join(self._tmpdir.name, "bot.log")
-        controller.LOG_FILE_PREV = os.path.join(self._tmpdir.name, "bot.log.1")
+        self._orig_log_dir = logs.LOG_DIR
+        self._orig_log_file = logs.LOG_FILE
+        self._orig_log_file_prev = logs.LOG_FILE_PREV
+        logs.LOG_DIR = self._tmpdir.name
+        logs.LOG_FILE = os.path.join(self._tmpdir.name, "bot.log")
+        logs.LOG_FILE_PREV = os.path.join(self._tmpdir.name, "bot.log.1")
 
     def tearDown(self):
-        controller.LOG_DIR = self._orig_log_dir
-        controller.LOG_FILE = self._orig_log_file
-        controller.LOG_FILE_PREV = self._orig_log_file_prev
+        logs.LOG_DIR = self._orig_log_dir
+        logs.LOG_FILE = self._orig_log_file
+        logs.LOG_FILE_PREV = self._orig_log_file_prev
         self._tmpdir.cleanup()
 
     def test_tail_log_returns_empty_when_missing(self):
         self.assertEqual(controller._tail_log(10), [])
 
     def test_tail_log_returns_last_n_lines(self):
-        with open(controller.LOG_FILE, "w") as f:
+        with open(logs.LOG_FILE, "w") as f:
             f.write("line1\nline2\nline3\nline4\n")
         self.assertEqual(controller._tail_log(2), ["line3", "line4"])
 
     def test_rotate_log_moves_existing_file(self):
-        with open(controller.LOG_FILE, "w") as f:
+        with open(logs.LOG_FILE, "w") as f:
             f.write("old run\n")
         controller._rotate_log()
-        self.assertFalse(os.path.exists(controller.LOG_FILE))
-        with open(controller.LOG_FILE_PREV) as f:
+        self.assertFalse(os.path.exists(logs.LOG_FILE))
+        with open(logs.LOG_FILE_PREV) as f:
             self.assertEqual(f.read(), "old run\n")
 
     def test_rotate_log_noop_when_nothing_to_rotate(self):
         controller._rotate_log()  # should not raise
-        self.assertFalse(os.path.exists(controller.LOG_FILE))
+        self.assertFalse(os.path.exists(logs.LOG_FILE))
 
 
 class FormatDurationTests(unittest.TestCase):
@@ -216,19 +217,19 @@ class AuthorizationTests(unittest.TestCase):
 
 
 class GetUpdatesFailureTests(unittest.TestCase):
-    @patch("controller.urllib.request.urlopen")
+    @patch("controller.services.telegram.urllib.request.urlopen")
     def test_returns_none_on_url_error(self, urlopen):
         import urllib.error
 
         urlopen.side_effect = urllib.error.URLError("connection reset")
         self.assertIsNone(controller.get_updates(offset=0, timeout=0))
 
-    @patch("controller.urllib.request.urlopen")
+    @patch("controller.services.telegram.urllib.request.urlopen")
     def test_returns_none_on_generic_exception(self, urlopen):
         urlopen.side_effect = Exception("read timed out")
         self.assertIsNone(controller.get_updates(offset=0, timeout=0))
 
-    @patch("controller.urllib.request.urlopen")
+    @patch("controller.services.telegram.urllib.request.urlopen")
     def test_returns_list_on_success(self, urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({"result": [{"update_id": 1}]}).encode("utf-8")
@@ -237,7 +238,7 @@ class GetUpdatesFailureTests(unittest.TestCase):
 
 
 class DrainBacklogTests(unittest.TestCase):
-    @patch("controller.get_updates")
+    @patch("controller.app.get_updates")
     def test_handles_none_without_raising(self, get_updates):
         get_updates.return_value = None
         c = controller.Controller()
@@ -245,7 +246,7 @@ class DrainBacklogTests(unittest.TestCase):
         c._drain_backlog()  # should not raise
         self.assertEqual(c.offset, 0)
 
-    @patch("controller.get_updates")
+    @patch("controller.app.get_updates")
     def test_advances_offset_past_drained_updates(self, get_updates):
         get_updates.return_value = [{"update_id": 5}, {"update_id": 7}]
         c = controller.Controller()
@@ -282,7 +283,7 @@ class BotProcessGuardTests(unittest.TestCase):
 
 
 class CmdStartAppLifecycleTests(unittest.TestCase):
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_launches_app_before_starting_bot(self, send_message, ensure_running):
         call_order = []
@@ -302,7 +303,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
         c.bot.start.assert_called_once()
         self.assertEqual(call_order, ["launch_app", "start_bot"])
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_does_not_start_bot_when_app_launch_fails(self, send_message, ensure_running):
         ensure_running.side_effect = RuntimeError("app never came up")
@@ -318,7 +319,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
             any("Couldn't launch" in call.args[1] for call in send_message.call_args_list)
         )
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_skips_app_launch_when_bot_already_running(self, send_message, ensure_running):
         c = controller.Controller()
@@ -333,7 +334,7 @@ class CmdStartAppLifecycleTests(unittest.TestCase):
 
 
 class CmdStopKillAppLifecycleTests(unittest.TestCase):
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_stop_closes_app_after_process_exits(self, send_message, force_stop):
         c = controller.Controller()
@@ -350,7 +351,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
             controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
         )
 
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_stop_noop_when_not_running(self, send_message, force_stop):
         c = controller.Controller()
@@ -363,7 +364,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
         c.bot.stop.assert_not_called()
         force_stop.assert_not_called()
 
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_kill_closes_app(self, send_message, force_stop):
         c = controller.Controller()
@@ -378,7 +379,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
             controller.DEVICE_IP, controller.DEVICE_PORT, controller.GAME_PACKAGE
         )
 
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_app_close_failure_reports_but_does_not_raise(self, send_message, force_stop):
         force_stop.side_effect = Exception("adb offline")
@@ -393,7 +394,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
             any("couldn't close" in call.args[1].lower() for call in send_message.call_args_list)
         )
 
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_stop_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
@@ -407,7 +408,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(c.paused)
 
-    @patch("controller.device_force_stop_app", side_effect=RuntimeError("adb offline"))
+    @patch("controller.app.device_force_stop_app", side_effect=RuntimeError("adb offline"))
     @patch.object(controller, "send_message")
     def test_stop_from_paused_can_retry_app_close(self, send_message, force_stop):
         c = controller.Controller()
@@ -418,7 +419,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
 
         self.assertTrue(c.paused)
 
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_kill_closes_app_from_paused_state(self, send_message, force_stop):
         c = controller.Controller()
@@ -432,7 +433,7 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
 
 
 class CmdPauseTests(unittest.TestCase):
-    @patch("controller.device_force_stop_app")
+    @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
     def test_pause_waits_for_exit_and_leaves_game_open(self, send_message, force_stop):
         c = controller.Controller()
@@ -451,7 +452,7 @@ class CmdPauseTests(unittest.TestCase):
         self.assertFalse(c.pause_pending)
         self.assertTrue(any("PAUSED" in call.args[1] for call in send_message.call_args_list))
 
-    @patch("controller._wait_for_bot_exit")
+    @patch("controller.app._wait_for_bot_exit")
     @patch.object(controller, "send_message")
     def test_slow_exit_stays_pausing_until_child_exits(self, send_message, wait_for_exit):
         c = controller.Controller()
@@ -488,7 +489,7 @@ class CmdPauseTests(unittest.TestCase):
         c.bot.start.assert_not_called()
         self.assertIn("still pausing", send_message.call_args.args[1])
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_start_from_paused_reuses_last_flags(self, send_message, ensure_running):
         c = controller.Controller()
@@ -498,7 +499,7 @@ class CmdPauseTests(unittest.TestCase):
         c.bot.proc.pid = 4242
         c.paused = True
         flags = {"fs": "y", "cr": "n", "rb": "n", "relic": "y"}
-        with patch.object(controller, "_load_last_start", return_value=flags):
+        with patch.object(last_start, "_load_last_start", return_value=flags):
             controller.cmd_start(c, 123, "cr=y")
 
         c.bot.start.assert_called_once_with(
@@ -506,7 +507,7 @@ class CmdPauseTests(unittest.TestCase):
         )
         self.assertFalse(c.paused)
 
-    @patch("controller.device_ensure_app_running", side_effect=RuntimeError("adb offline"))
+    @patch("controller.app.device_ensure_app_running", side_effect=RuntimeError("adb offline"))
     @patch.object(controller, "send_message")
     def test_failed_start_leaves_paused_state(self, send_message, ensure_running):
         c = controller.Controller()
@@ -620,7 +621,7 @@ class InlineBoardTests(unittest.TestCase):
             ],
         )
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_bare_start_shows_board_and_does_not_launch(self, send_message, ensure_running):
         send_message.return_value = {"ok": True, "result": {"message_id": 42}}
@@ -630,7 +631,7 @@ class InlineBoardTests(unittest.TestCase):
         c.bot.is_running.return_value = False
         c.paused = True
         saved = {"fs": "y", "cr": "n", "rb": "3", "relic": "y"}
-        with patch.object(controller, "_load_last_start", return_value=saved):
+        with patch.object(last_start, "_load_last_start", return_value=saved):
             controller.cmd_start(c, 123, "")
 
         ensure_running.assert_not_called()
@@ -645,7 +646,7 @@ class InlineBoardTests(unittest.TestCase):
         self.assertIn("🎲 Random Boost: -15% HP Drain", labels)
         self.assertIn("▶️ Start", labels)
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "send_message")
     def test_typed_flags_still_start_immediately(self, send_message, ensure_running):
         c = controller.Controller()
@@ -660,8 +661,10 @@ class InlineBoardTests(unittest.TestCase):
         c.bot.start.assert_called_once_with(
             {"fs": "y", "cr": "y", "rb": "1", "relic": "n", "7j": "y"}
         )
-        self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
-        self.assertFalse(any(call.kwargs.get("reply_markup") for call in send_message.call_args_list))
+        started = next(call for call in send_message.call_args_list if call.args[1].startswith("▶️ Started"))
+        labels = _button_labels(started.kwargs["reply_markup"])
+        self.assertIn("⏸️ Pause", labels)
+        self.assertIn("🛑 Stop", labels)
 
     def test_dispatch_update_routes_callback_query(self):
         c = controller.Controller()
@@ -749,7 +752,7 @@ class InlineBoardTests(unittest.TestCase):
         send_message.assert_not_called()
         self.assertEqual(flags["fs"], "n")
 
-    @patch("controller.device_ensure_app_running")
+    @patch("controller.app.device_ensure_app_running")
     @patch.object(controller, "edit_message_reply_markup")
     @patch.object(controller, "answer_callback_query")
     @patch.object(controller, "send_message")
@@ -806,10 +809,10 @@ class InlineBoardTests(unittest.TestCase):
         labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
         self.assertEqual(labels, ["📊 Status", "📋 Logs", "📸 Screenshot", "⏸️ Pause", "🛑 Stop"])
 
-    @patch("controller.device_force_stop_app")
-    @patch("controller.capture_screenshot_bytes", return_value=b"png")
-    @patch("controller.send_photo")
-    @patch("controller._tail_log", return_value=["hello"])
+    @patch("controller.app.device_force_stop_app")
+    @patch("controller.app.capture_screenshot_bytes", return_value=b"png")
+    @patch("controller.app.send_photo")
+    @patch("controller.app._tail_log", return_value=["hello"])
     @patch.object(controller, "send_message")
     @patch.object(controller, "answer_callback_query")
     def test_menu_callbacks_run_existing_commands(
@@ -840,6 +843,181 @@ class InlineBoardTests(unittest.TestCase):
 
         force_stop.assert_not_called()
         self.assertEqual(answer.call_count, 5)
+
+
+class SessionPanelTests(unittest.TestCase):
+    def test_session_keyboard_labels(self):
+        labels = _button_labels(controller.session_keyboard())
+        self.assertEqual(
+            labels,
+            ["⏸️ Pause", "🛑 Stop", "📸 Screenshot", "📋 Logs", "📊 Status", "❓ Help"],
+        )
+
+    def test_start_attaches_panel_and_records_message(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+        with patch("controller.app.device_ensure_app_running"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 42}}) as send_message, \
+             patch.object(controller, "edit_message_reply_markup"):
+            controller._launch_with_flags(c, 5, dict(controller.DEFAULT_FLAGS))
+
+        started = send_message.call_args_list[-1]
+        self.assertTrue(started.args[1].startswith("▶️ Started"))
+        labels = _button_labels(started.kwargs["reply_markup"])
+        self.assertIn("⏸️ Pause", labels)
+        self.assertIn("❓ Help", labels)
+        self.assertEqual(c.session_messages[5], 42)
+
+    def test_new_session_retires_previous_panel(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+        c.session_messages[5] = 42  # panel from the previous run
+        with patch("controller.app.device_ensure_app_running"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 77}}), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            controller._launch_with_flags(c, 5, dict(controller.DEFAULT_FLAGS))
+
+        edit.assert_called_once_with(5, 42, {"inline_keyboard": []})
+        self.assertEqual(c.session_messages[5], 77)
+        self.assertIn((5, 42), c._retired_session_messages)
+
+    def test_new_session_retires_panels_in_other_chats(self):
+        # The bot session is global: a panel left clickable in another chat
+        # could pause/stop a run it doesn't belong to.
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+        c.session_messages[99] = 42  # previous run's panel, different chat
+        with patch("controller.app.device_ensure_app_running"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 77}}), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            controller._launch_with_flags(c, 5, dict(controller.DEFAULT_FLAGS))
+
+        edit.assert_called_once_with(99, 42, {"inline_keyboard": []})
+        self.assertEqual(c.session_messages, {5: 77})
+        self.assertIn((99, 42), c._retired_session_messages)
+
+    def test_late_tap_on_retired_panel_is_ignored(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c._retired_session_messages.add((5, 9))
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = True
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "send_message") as send_message:
+            c._handle_callback(_callback("menu:pause"))
+
+        c.bot.stop.assert_not_called()
+        send_message.assert_not_called()
+
+    def test_stop_retires_session_panel(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+        c.session_messages[123] = 42
+        with patch("controller.app.device_force_stop_app"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 77}}), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            controller.cmd_stop(c, 123, "")
+
+        edit.assert_called_once_with(123, 42, {"inline_keyboard": []})
+        self.assertNotIn(123, c.session_messages)
+
+
+class ResumeButtonTests(unittest.TestCase):
+    def test_resume_keyboard_labels(self):
+        paused = _button_labels(controller.resume_keyboard(paused=True))
+        stopped = _button_labels(controller.resume_keyboard(paused=False))
+        self.assertEqual(paused, ["▶️ Continue (same settings)"])
+        self.assertEqual(stopped, ["▶️ Start"])
+
+    def test_pause_sends_continue_button(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+        c.bot.proc.poll.return_value = 0
+        c.bot.proc.returncode = 0
+        c.last_known_alive = True
+        with patch("controller.app.device_force_stop_app"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 50}}) as send_message:
+            controller.cmd_pause(c, 123, "")
+
+        paused_msg = next(call for call in send_message.call_args_list if "PAUSED" in call.args[1])
+        self.assertEqual(
+            paused_msg.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "resume:continue",
+        )
+        self.assertEqual(c.resume_messages[123], 50)
+
+    def test_stop_sends_start_button(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.side_effect = [True, False]
+        with patch("controller.app.device_force_stop_app"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 60}}) as send_message:
+            controller.cmd_stop(c, 123, "")
+
+        closed = next(call for call in send_message.call_args_list if "Closed CookieRun" in call.args[1])
+        self.assertEqual(
+            closed.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "resume:board",
+        )
+        self.assertEqual(c.resume_messages[123], 60)
+
+    def test_continue_relaunches_with_same_flags(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+        c.resume_messages[5] = 9  # the Continue button's own message
+        flags = {"fs": "y", "cr": "n", "rb": "3", "relic": "y", "7j": "y"}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup") as edit, \
+             patch.object(last_start, "_load_last_start", return_value=flags), \
+             patch("controller.app.device_ensure_app_running"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 70}}):
+            c._handle_callback(_callback("resume:continue"))
+
+        c.bot.start.assert_called_once_with(flags)
+        edit.assert_called_once_with(5, 9, {"inline_keyboard": []})  # button consumed
+        self.assertIn((5, 9), c._retired_session_messages)
+
+    def test_start_button_opens_option_board(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.resume_messages[5] = 9
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 70}}) as send_message:
+            c._handle_callback(_callback("resume:board"))
+
+        labels = _button_labels(send_message.call_args.kwargs["reply_markup"])
+        self.assertIn("▶️ Start", labels)
+        self.assertEqual(c.boards[5]["message_id"], 70)
+
+    def test_new_session_retires_resume_buttons(self):
+        c = controller.Controller()
+        c.bot = MagicMock()
+        c.bot.is_running.return_value = False
+        c.bot.proc.pid = 9
+        c.resume_messages[5] = 60  # Start button from the /stop of the last run
+        with patch("controller.app.device_ensure_app_running"), \
+             patch.object(controller, "send_message", return_value={"result": {"message_id": 77}}), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            controller._launch_with_flags(c, 5, dict(controller.DEFAULT_FLAGS))
+
+        edit.assert_called_once_with(5, 60, {"inline_keyboard": []})
+        self.assertEqual(c.resume_messages, {})
+        self.assertIn((5, 60), c._retired_session_messages)
 
 
 if __name__ == "__main__":

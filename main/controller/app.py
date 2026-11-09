@@ -1,347 +1,87 @@
-"""Telegram remote control for the CookieRun Classic bot. See README.md."""
+"""Telegram remote control for the CookieRun Classic bot. See README.md.
+
+Component layout (shopping-pipeline style):
+- models/       — start-flag domain: defaults, parsing, validation
+- views/        — keyboards + message text (presentation, no I/O)
+- services/     — Telegram transport, device reads, bot child process
+- repositories/ — on-disk state: bot logs, last-start flags
+- app.py        — this file: command handlers, callback routing, main loop
+
+The names imported from the layers are re-exported on purpose: handlers and
+the Controller below reference them through this module's namespace, which
+keeps every external call in one place (and the tests patch them here).
+"""
 
 import atexit
-import json
-import os
 import signal
-import socket
-import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
-from adb import device_connect, device_ensure_app_running, device_force_stop_app
-from config import (
-    DEVICE_IP,
-    DEVICE_PORT,
-    TELEGRAM_ALLOWED_USER_IDS,
-    TELEGRAM_BOT_TOKEN,
+from services.adb import device_connect, device_ensure_app_running, device_force_stop_app
+from config import get_settings
+
+from .models.flags import (
+    BOOST_COUNT,
+    BOOST_NAMES,
+    DEFAULT_FLAGS,
+    flags_to_answers,
+    flags_to_stdin,
+    parse_start_args,
+    validate_flags,
+)
+from .repositories.last_start import (
+    LAST_START_FILE,
+    _flags_from_saved_or_default,
+    _load_last_start,
+    _save_last_start,
+)
+from .repositories.logs import (
+    LOG_DIR,
+    LOG_FILE,
+    LOG_FILE_PREV,
+    LOG_TAIL_DEFAULT,
+    LOG_TAIL_MAX,
+    _rotate_log,
+    _tail_log,
+)
+from .services.bot_process import BotProcess
+from .services.device import DEVICE_IP, DEVICE_PORT, GAME_PACKAGE, capture_screenshot_bytes
+from .services.telegram import (
+    POLL_TIMEOUT,
+    _message_id_from_result,
+    answer_callback_query,
+    edit_message_reply_markup,
+    get_updates,
+    send_message,
+    send_photo,
+)
+from .views.keyboards import board_keyboard, menu_keyboard, resume_keyboard, session_keyboard
+from .views.messages import (
+    GUIDE_TEXT,
+    HELP_TEXT,
+    MENU_TEXT,
+    _START_USAGE,
+    _format_duration,
+    board_text,
+    flags_summary,
 )
 
-# CookieRun Classic's Android package. Only used by /start (to launch it
-# before spawning the bot) and /stop, /kill (to close it after signaling
-# the bot process) — bot.py's own device_reset_app() calls are unaffected.
-GAME_PACKAGE = "com.devsisters.crg"
-
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-LOG_FILE_PREV = os.path.join(LOG_DIR, "bot.log.1")
-LAST_START_FILE = os.path.join(LOG_DIR, "last_start.json")
-
-LOG_TAIL_DEFAULT = 30
-LOG_TAIL_MAX = 100
-POLL_TIMEOUT = 30  # seconds, Telegram long-poll
-
-# Names come straight from bot.py so the board always shows the real boost list.
-from bot import BOOST_CHOICES  # noqa: E402
-
-BOOST_COUNT = len(BOOST_CHOICES)
-BOOST_NAMES = [name for name, _ in BOOST_CHOICES]
-
-DEFAULT_FLAGS = {"fs": "n", "cr": "n", "rb": "n", "relic": "n", "7j": "n"}
-
-API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-
-
-# -------------------
-# TELEGRAM TRANSPORT (stdlib only, mirrors alerts.py's style)
-# -------------------
-def _api_url(method):
-    return f"{API_BASE}/{method}"
-
-
-def _api_post(method, body, timeout=10):
-    payload = json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(
-        _api_url(method),
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (socket.gaierror, urllib.error.URLError) as e:
-        print(f"⚠️ Telegram {method} failed — connection issue: {e}")
-    except Exception as e:
-        print(f"⚠️ Telegram {method} failed: {e}")
-    return None
-
-
-def send_message(chat_id, text, timeout=10, parse_mode=None, reply_markup=None):
-    body = {"chat_id": chat_id, "text": text}
-    if parse_mode:
-        body["parse_mode"] = parse_mode
-    if reply_markup is not None:
-        body["reply_markup"] = reply_markup
-    return _api_post("sendMessage", body, timeout=timeout)
-
-
-def edit_message_reply_markup(chat_id, message_id, reply_markup, timeout=10):
-    body = {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup}
-    return _api_post("editMessageReplyMarkup", body, timeout=timeout)
-
-
-def answer_callback_query(callback_query_id, timeout=10):
-    return _api_post("answerCallbackQuery", {"callback_query_id": callback_query_id}, timeout=timeout)
-
-
-def _message_id_from_result(result):
-    if not isinstance(result, dict):
-        return None
-    message = result.get("result")
-    if not isinstance(message, dict):
-        return None
-    return message.get("message_id")
+_SETTINGS = get_settings()
+TELEGRAM_BOT_TOKEN = _SETTINGS.telegram_bot_token
+TELEGRAM_ALLOWED_USER_IDS = set(_SETTINGS.telegram_allowed_user_ids)
 
 
 def send_code_message(chat_id, header, code_text, timeout=10):
     """Send `header` as plain text followed by `code_text` in a monospace
     block, so log-style lines (timestamps + emoji + text) stay aligned the
     way they do in a terminal instead of reflowing in Telegram's
-    proportional font. Falls back to a plain message if Markdown parsing
-    fails (e.g. code_text contains an odd number of backticks)."""
+    proportional font. Lives in the controller layer (not view.py) so its
+    send goes through the same send_message the handlers use."""
     escaped = code_text.replace("`", "'")
     text = f"{header}\n```\n{escaped}\n```" if header else f"```\n{escaped}\n```"
     send_message(chat_id, text, timeout=timeout, parse_mode="Markdown")
 
-
-def send_photo(chat_id, image_bytes, filename="screenshot.png", caption=None, timeout=20):
-    boundary = "----CookieRunControllerBoundary"
-
-    def field(name, value):
-        return (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n"
-        ).encode("utf-8")
-
-    parts = [field("chat_id", chat_id)]
-    if caption:
-        parts.append(field("caption", caption))
-    parts.append(
-        (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="photo"; filename="{filename}"\r\n'
-            f"Content-Type: image/png\r\n\r\n"
-        ).encode("utf-8")
-    )
-    parts.append(image_bytes)
-    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-    body = b"".join(parts)
-
-    request = urllib.request.Request(
-        _api_url("sendPhoto"),
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(request, timeout=timeout)
-    except (socket.gaierror, urllib.error.URLError) as e:
-        print(f"⚠️ Couldn't send Telegram photo — connection issue: {e}")
-    except Exception as e:
-        print(f"⚠️ Failed to send Telegram photo: {e}")
-
-
-def get_updates(offset, timeout=POLL_TIMEOUT):
-    """Long-poll Telegram for updates. Returns a list of updates, or None on
-    failure (network drop, sleep/wake, Telegram hiccup, etc.) so the caller
-    can back off instead of hammering the API in a tight loop."""
-    params = urllib.parse.urlencode({"offset": offset, "timeout": timeout})
-    url = f"{_api_url('getUpdates')}?{params}"
-    request = urllib.request.Request(url, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout + 10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            return data.get("result", [])
-    except (socket.gaierror, urllib.error.URLError) as e:
-        print(f"⚠️ Telegram poll failed (network): {e}")
-        return None
-    except Exception as e:
-        print(f"⚠️ Telegram poll failed: {e}")
-        return None
-
-
-# -------------------
-# SCREENSHOT (independent of the bot child — works even if it's dead/wedged)
-# -------------------
-def capture_screenshot_bytes(timeout=10):
-    cmd = ["adb", "-s", f"{DEVICE_IP}:{DEVICE_PORT}", "exec-out", "screencap", "-p"]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=True)
-        return result.stdout
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        device_connect(DEVICE_IP, DEVICE_PORT)
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=True)
-        return result.stdout
-
-
-# -------------------
-# /start FLAG <-> STDIN MAPPING (see coupling note at top of file)
-# -------------------
-def flags_to_answers(flags):
-    answers = [flags["fs"], flags["cr"]]
-    if flags["rb"] == "n":
-        answers.append("n")
-    else:
-        answers.append("y")
-        answers.append(flags["rb"])
-    answers.append(flags["relic"])
-    answers.append(flags["7j"])
-    return answers
-
-
-def flags_to_stdin(flags):
-    return "\n".join(flags_to_answers(flags)) + "\n"
-
-
-def parse_start_args(args_text, base):
-    flags = dict(base)
-    for token in args_text.split():
-        if "=" not in token:
-            raise ValueError(f"Invalid flag '{token}'. Use key=value, e.g. fs=y")
-        key, _, value = token.partition("=")
-        key = key.strip().lower()
-        value = value.strip().lower()
-        if key not in DEFAULT_FLAGS:
-            raise ValueError(f"Unknown flag '{key}'. Valid flags: fs, cr, rb, relic, 7j")
-        flags[key] = value
-    return flags
-
-
-def validate_flags(flags):
-    errors = []
-    for key in ("fs", "cr", "relic", "7j"):
-        value = flags.get(key)
-        if value not in ("y", "n"):
-            errors.append(f"{key} must be y or n (got '{value}')")
-    rb = str(flags.get("rb"))
-    if rb != "n" and not (rb.isdigit() and 1 <= int(rb) <= BOOST_COUNT):
-        errors.append(f"rb must be 'n' or 1-{BOOST_COUNT} (got '{rb}')")
-    if errors:
-        raise ValueError("; ".join(errors))
-
-
-def _save_last_start(flags):
-    os.makedirs(LOG_DIR, exist_ok=True)
-    tmp = LAST_START_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(flags, f)
-    os.replace(tmp, LAST_START_FILE)
-
-
-def _load_last_start():
-    if not os.path.exists(LAST_START_FILE):
-        return None
-    try:
-        with open(LAST_START_FILE) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _flags_from_saved_or_default():
-    """Saved last-start flags, with any new flag filled from DEFAULT_FLAGS."""
-    flags = dict(DEFAULT_FLAGS)
-    saved = _load_last_start()
-    if isinstance(saved, dict):
-        for key in DEFAULT_FLAGS:
-            if key in saved and saved[key] is not None:
-                flags[key] = saved[key]
-    return flags
-
-
-def rb_label(value):
-    """Board label suffix for the rb flag: the full boost name when on."""
-    if value.isdigit() and 1 <= int(value) <= BOOST_COUNT:
-        return f": {BOOST_NAMES[int(value) - 1]}"
-    return ""
-
-
-def flags_summary(flags):
-    """Human-readable option states for the ▶️ Started confirmation."""
-    def mark(value):
-        return "✅" if value == "y" else "❌"
-
-    lines = [
-        f"⚡ Fast Start {mark(flags['fs'])}   🍪 Cookie Relay {mark(flags['cr'])}",
-        f"🏺 Relic {mark(flags['relic'])}   🐇 7 Jumps {mark(flags['7j'])}",
-    ]
-    rb = flags["rb"]
-    if rb.isdigit() and 1 <= int(rb) <= BOOST_COUNT:
-        lines.append(f"🎲 Random Boost: {BOOST_NAMES[int(rb) - 1]} ✅")
-    else:
-        lines.append("🎲 Random Boost ❌")
-    return "\n".join(lines)
-
-
-def board_text(flags):
-    # Static by design: per-tap refreshes edit only the button markup, so
-    # the message text never flickers. Button highlight carries the state.
-    return "🍪 Start options — highlighted = ON. Tap to change, then ▶️ Start."
-
-
-def _toggle_button(key, label, on):
-    button = {"text": label, "callback_data": f"toggle:{key}"}
-    if on:
-        button["style"] = "primary"  # highlighted = selected
-    return button
-
-
-def _pack(buttons, per_row=2):
-    """Group buttons `per_row` per keyboard row so they render narrower."""
-    return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
-
-
-def board_keyboard(flags):
-    toggles = [
-        _toggle_button(key, label, flags[key] == "y")
-        for key, label in (
-            ("fs", "⚡ Fast Start"),
-            ("cr", "🍪 Cookie Relay"),
-            ("relic", "🏺 Relic"),
-            ("7j", "🐇 7 Jumps"),
-        )
-    ]
-    rows = _pack(toggles)
-    rows.append([_toggle_button("rb", f"🎲 Random Boost{rb_label(flags['rb'])}", flags["rb"] != "n")])
-    if flags["rb"] != "n":
-        # Boost picker: radio-style, exactly one selected (highlighted);
-        # bulleted so the rows read as a nested list under Random Boost.
-        picker = []
-        for i, name in enumerate(BOOST_NAMES, 1):
-            selected = flags["rb"] == str(i)
-            mark = "✅ " if selected else "▫️ "
-            button = {"text": f"{mark}{name}", "callback_data": f"setrb:{i}"}
-            if selected:
-                button["style"] = "primary"
-            picker.append(button)
-        rows += _pack(picker)
-    rows.append([{"text": "▶️ Start", "callback_data": "board:start", "style": "success"}])
-    return {"inline_keyboard": rows}
-
-
-def menu_keyboard():
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "📊 Status", "callback_data": "menu:status"},
-                {"text": "📋 Logs", "callback_data": "menu:logs"},
-            ],
-            [{"text": "📸 Screenshot", "callback_data": "menu:screenshot"}],
-            [
-                {"text": "⏸️ Pause", "callback_data": "menu:pause"},
-                {"text": "🛑 Stop", "callback_data": "menu:stop"},
-            ],
-        ]
-    }
-
-
-MENU_TEXT = "🍪 Controller menu\nTap a button to run that command."
 
 _MENU_COMMANDS = {
     "status": "/status",
@@ -349,153 +89,13 @@ _MENU_COMMANDS = {
     "screenshot": "/screenshot",
     "pause": "/pause",
     "stop": "/stop",
+    "help": "/help",
 }
-
-
-# -------------------
-# LOG HELPERS
-# -------------------
-def _rotate_log():
-    os.makedirs(LOG_DIR, exist_ok=True)
-    if os.path.exists(LOG_FILE):
-        try:
-            os.replace(LOG_FILE, LOG_FILE_PREV)
-        except OSError:
-            pass
-
-
-def _tail_log(n):
-    if not os.path.exists(LOG_FILE):
-        return []
-    with open(LOG_FILE, "r", errors="replace") as f:
-        lines = f.readlines()
-    return [line.rstrip("\n") for line in lines[-n:]]
-
-
-def _format_duration(seconds):
-    seconds = int(seconds)
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m {secs}s"
-    return f"{secs}s"
-
-
-# -------------------
-# BOT CHILD PROCESS
-# -------------------
-class BotProcess:
-    def __init__(self):
-        self.proc = None
-        self.started_at = None
-        self.flags = None
-
-    def is_running(self):
-        return self.proc is not None and self.proc.poll() is None
-
-    def start(self, flags):
-        if self.is_running():
-            raise RuntimeError("Bot is already running.")
-        stdin_sequence = flags_to_stdin(flags)
-        _rotate_log()
-        log_fp = open(LOG_FILE, "a", buffering=1)
-        try:
-            # -u: unbuffered stdout, so /logs isn't minutes stale.
-            # start_new_session: own process group so /stop and /kill can
-            # signal the whole tree, not just this one pid.
-            self.proc = subprocess.Popen(
-                [sys.executable, "-u", "main.py"],
-                stdin=subprocess.PIPE,
-                stdout=log_fp,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                text=True,
-            )
-        finally:
-            log_fp.close()  # child holds its own duplicated fd
-        try:
-            self.proc.stdin.write(stdin_sequence)
-            self.proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-        self.started_at = time.time()
-        self.flags = flags
-        _save_last_start(flags)
-
-    def _signal(self, sig):
-        if not self.is_running():
-            return False
-        try:
-            os.killpg(os.getpgid(self.proc.pid), sig)
-        except ProcessLookupError:
-            pass
-        return True
-
-    def stop(self):
-        return self._signal(signal.SIGINT)
-
-    def kill(self):
-        return self._signal(signal.SIGKILL)
-
-    def uptime(self):
-        if self.started_at is None:
-            return 0
-        return time.time() - self.started_at
 
 
 # -------------------
 # COMMAND HANDLERS
 # -------------------
-_START_USAGE = "Usage: /start fs=y cr=y rb=1 relic=n 7j=y|n"
-
-HELP_TEXT = (
-    "🍪 CookieRun Bot Controller\n\n"
-    "/start — button board for the current flags; tap ▶️ Start to launch\n"
-    "/start [fs=y|n cr=y|n rb=1-11|n relic=y|n 7j=y|n] — launches CookieRun "
-    "Classic (if not already running) then starts the bot (reuses last flags "
-    "for anything omitted)\n"
-    "/menu — buttons for status, logs (30 lines), screenshot, pause, and stop\n"
-    "/pause — stop bot taps, leave CookieRun Classic open; /start to restart\n"
-    "/stop — graceful stop (same as Ctrl+C), then closes CookieRun Classic\n"
-    "/kill — force stop (SIGKILL), then closes CookieRun Classic\n"
-    "/status — running state, uptime, last log line\n"
-    "/logs [n] — last n log lines (default 30, max 100)\n"
-    "/screenshot — current BlueStacks screen\n"
-    "/guide — explain the /start flags and boost numbers\n"
-    "/help — this message"
-)
-
-GUIDE_TEXT = (
-    "📖 /start flags\n\n"
-    "fs=y|n — Fast Start: buy + use it\n"
-    "cr=y|n — Cookie Relay: buy + use it\n"
-    "rb=1-11|n — Desired Random Boost: buy + use the boost number below, "
-    "or n to skip\n"
-    "relic=y|n — Detect Relic: open + claim relics when seen\n"
-    "7j=y|n — 7 jumps at the start of every run\n\n"
-    "Bare /start opens a button board (seeded from the last start, or the "
-    "defaults) instead of launching. Tap a flag to change it — Random Boost "
-    "toggles on/off; when on, 11 named boost buttons appear — tap one to "
-    "select it — then ▶️ Start.\n"
-    "/menu opens buttons for status, logs, screenshot, pause, and stop.\n\n"
-    "🎲 rb boost numbers\n"
-    "1. Double Coins\n"
-    "2. +15% Score Bonus\n"
-    "3. -15% HP Drain\n"
-    "4. Revive Once with 80 HP\n"
-    "5. 70% Crush Chance\n"
-    "6. +17% Base Speed\n"
-    "7. Gold Coin Magic\n"
-    "8. -30% Collision Damage\n"
-    "9. +20% HP from Potions\n"
-    "10. Magnetic Aura\n"
-    "11. 2 Pit Lifts\n\n"
-    "Example: /start fs=y cr=y rb=1 relic=n 7j=y"
-)
-
-
 def _launch_with_flags(controller, chat_id, flags):
     if controller.pause_pending:
         send_message(chat_id, "⏳ Bot is still pausing. Wait for the PAUSED message before /start.")
@@ -523,10 +123,13 @@ def _launch_with_flags(controller, chat_id, flags):
     flag_str = " ".join(f"{k}={v}" for k, v in flags.items())
     answers_str = " ".join(flags_to_answers(flags))
     print(f"🚦 /start flags: {flag_str}  →  stdin: {answers_str}")
-    send_message(
+    controller._retire_session_panels()  # stale panels must not control the new run
+    result = send_message(
         chat_id,
         f"▶️ Started (pid {controller.bot.proc.pid})\n{flags_summary(flags)}",
+        reply_markup=session_keyboard(),
     )
+    controller.session_messages[chat_id] = _message_id_from_result(result)
 
 
 def cmd_start(controller, chat_id, args_text):
@@ -617,9 +220,10 @@ def _stop_app_after_exit(controller, chat_id, wait=10, poll_interval=1):
     _wait_for_bot_exit(controller.bot, wait, poll_interval)
     try:
         device_force_stop_app(DEVICE_IP, DEVICE_PORT, GAME_PACKAGE)
-        send_message(chat_id, "📱 Closed CookieRun Classic.")
+        controller._send_resume_button(chat_id, "📱 Closed CookieRun Classic.", paused=False)
         return True
     except Exception as e:
+        controller._retire_session_panels()
         send_message(chat_id, f"⚠️ Bot stopped, but couldn't close CookieRun Classic: {e}")
         return False
 
@@ -711,6 +315,14 @@ class Controller:
         # newer board replaced them or Start consumed them. Late taps on
         # those messages are ignored.
         self._retired_board_messages = set()
+        # chat_id -> message_id of the action panel attached to the latest
+        # ▶️ Started message. Same retirement rules as boards: a new session
+        # or a stop/kill strips the old panel's buttons.
+        self.session_messages = {}
+        # chat_id -> message_id of the ▶️ Continue / ▶️ Start button sent
+        # after pause/stop/exit. Retired alongside the session panels.
+        self.resume_messages = {}
+        self._retired_session_messages = set()
         # Callbacks are answered/refreshed off the polling loop (see
         # _handle_callback). Tests flip this off to run them synchronously.
         self._async_callbacks = True
@@ -734,6 +346,37 @@ class Controller:
         if message_id is not None:
             self._retired_board_messages.add((chat_id, message_id))
             edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
+
+    def _retire_session_panels(self):
+        """Strip the buttons off every live session panel and resume button,
+        in every chat. The bot session is global, so a button left clickable
+        anywhere could pause/stop/start a run it doesn't belong to."""
+        for messages in (self.session_messages, self.resume_messages):
+            for chat_id, message_id in messages.items():
+                if message_id is not None:
+                    self._retired_session_messages.add((chat_id, message_id))
+                    edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
+            messages.clear()
+
+    def _send_resume_button(self, chat_id, text, paused):
+        """Send the post-exit message with its one-tap recovery button,
+        replacing any resume button sent earlier."""
+        self._retire_session_panels()  # one live resume button at a time
+        result = send_message(chat_id, text, reply_markup=resume_keyboard(paused))
+        message_id = _message_id_from_result(result)
+        if message_id is not None:
+            self.resume_messages[chat_id] = message_id
+
+    def _resume_continue(self, chat_id):
+        """▶️ Continue after /pause: relaunch with the flags of the session
+        that just paused (persisted as last-start when it began)."""
+        self._retire_session_panels()  # button consumed
+        _launch_with_flags(self, chat_id, _flags_from_saved_or_default())
+
+    def _resume_board(self, chat_id):
+        """▶️ Start after /stop: open the option board, same as a bare /start."""
+        self._retire_session_panels()  # button consumed
+        self.show_start_board(chat_id, _flags_from_saved_or_default())
 
     def _board_for(self, chat_id, message_id):
         board = self.boards.get(chat_id)
@@ -827,6 +470,8 @@ class Controller:
             self.last_chat_id = chat_id
             if (chat_id, message_id) in self._retired_board_messages:
                 return  # late tap on a board whose buttons were stripped
+            if (chat_id, message_id) in self._retired_session_messages:
+                return  # late tap on a panel from a session that already ended
             if data == "toggle:rb":
                 self._toggle_board_rb(chat_id, message_id)
             elif data.startswith("toggle:"):
@@ -835,6 +480,10 @@ class Controller:
                 self._set_board_rb(chat_id, message_id, data.split(":", 1)[1])
             elif data == "board:start":
                 self._start_from_board(chat_id)
+            elif data == "resume:continue":
+                self._resume_continue(chat_id)
+            elif data == "resume:board":
+                self._resume_board(chat_id)
             elif data.startswith("menu:"):
                 self._dispatch_menu(chat_id, data.split(":", 1)[1])
 
@@ -864,12 +513,16 @@ class Controller:
                 self.paused = True
                 print(f"⏸️ Bot process paused (exit code {code}).")
                 if self.pause_chat_id is not None:
-                    send_message(self.pause_chat_id, "⏸️ PAUSED — bot taps stopped; CookieRun Classic is still open. Use /start when ready.")
+                    self._send_resume_button(
+                        self.pause_chat_id,
+                        "⏸️ PAUSED — bot taps stopped; CookieRun Classic is still open.",
+                        paused=True,
+                    )
                 self.pause_chat_id = None
                 return
             print(f"🔴 Bot process exited (code {code}).")
             if self.last_chat_id is not None:
-                send_message(self.last_chat_id, f"🔴 Bot process exited (code {code}). Check /logs.")
+                self._send_resume_button(self.last_chat_id, f"🔴 Bot process exited (code {code}). Check /logs.", paused=False)
 
     def _handle_message(self, message):
         text = message.get("text", "")
