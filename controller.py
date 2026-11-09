@@ -740,12 +740,17 @@ class Controller:
         # chat_id -> {"message_id": int | None, "flags": dict}
         # In memory only. Restarting the controller resets the board.
         self.boards = {}
+        # (chat_id, message_id) of boards whose keyboard was stripped when a
+        # newer board replaced them or Start consumed them. Late taps on
+        # those messages are ignored.
+        self._retired_board_messages = set()
         # Callbacks are answered/refreshed off the polling loop (see
         # _handle_callback). Tests flip this off to run them synchronously.
         self._async_callbacks = True
         self._callback_lock = threading.Lock()
 
     def show_start_board(self, chat_id, flags):
+        self._retire_board(chat_id)  # strip the previous board's keyboard
         flags = {key: flags.get(key, DEFAULT_FLAGS[key]) for key in DEFAULT_FLAGS}
         result = send_message(chat_id, board_text(flags), reply_markup=board_keyboard(flags))
         self.boards[chat_id] = {
@@ -753,12 +758,24 @@ class Controller:
             "flags": flags,
         }
 
+    def _retire_board(self, chat_id):
+        """Remove the board's buttons so it can no longer be tapped."""
+        board = self.boards.pop(chat_id, None)
+        if not board:
+            return
+        message_id = board.get("message_id")
+        if message_id is not None:
+            self._retired_board_messages.add((chat_id, message_id))
+            edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
+
     def _board_for(self, chat_id, message_id):
         board = self.boards.get(chat_id)
         if board is None:
             board = {"message_id": message_id, "flags": _flags_from_saved_or_default()}
             self.boards[chat_id] = board
-        if message_id is not None:
+        elif message_id is not None and board.get("message_id") is not None and message_id != board["message_id"]:
+            return None  # tap on a superseded board message
+        elif message_id is not None:
             board["message_id"] = message_id
         return board
 
@@ -774,6 +791,8 @@ class Controller:
         if key not in DEFAULT_FLAGS or key == "rb":
             return
         board = self._board_for(chat_id, message_id)
+        if board is None:
+            return
         current = board["flags"].get(key, "n")
         board["flags"][key] = "n" if current == "y" else "y"
         self._refresh_board(chat_id, board)
@@ -782,6 +801,8 @@ class Controller:
         """Random Boost main button: off -> on (default Double Coins, picker
         expands); on -> off (picker collapses)."""
         board = self._board_for(chat_id, message_id)
+        if board is None:
+            return
         current = board["flags"].get("rb", "n")
         board["flags"]["rb"] = "1" if current == "n" else "n"
         self._refresh_board(chat_id, board)
@@ -791,12 +812,15 @@ class Controller:
         if not (value.isdigit() and 1 <= int(value) <= BOOST_COUNT):
             return
         board = self._board_for(chat_id, message_id)
+        if board is None:
+            return
         board["flags"]["rb"] = value
         self._refresh_board(chat_id, board)
 
     def _start_from_board(self, chat_id):
         board = self.boards.get(chat_id)
         flags = dict(board["flags"]) if board else _flags_from_saved_or_default()
+        self._retire_board(chat_id)  # consumed: strip its buttons
         _launch_with_flags(self, chat_id, flags)
 
     def _dispatch_menu(self, chat_id, action):
@@ -834,6 +858,8 @@ class Controller:
         with self._callback_lock:
             self._check_child_exit()
             self.last_chat_id = chat_id
+            if (chat_id, message_id) in self._retired_board_messages:
+                return  # late tap on a board whose buttons were stripped
             if data == "toggle:rb":
                 self._toggle_board_rb(chat_id, message_id)
             elif data.startswith("toggle:"):

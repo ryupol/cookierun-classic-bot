@@ -738,9 +738,10 @@ class InlineBoardTests(unittest.TestCase):
         self.assertEqual(flags["fs"], "n")
 
     @patch("controller.device_ensure_app_running")
+    @patch.object(controller, "edit_message_reply_markup")
     @patch.object(controller, "answer_callback_query")
     @patch.object(controller, "send_message")
-    def test_start_button_launches_with_board_flags(self, send_message, answer, ensure_running):
+    def test_start_button_launches_with_board_flags(self, send_message, answer, edit, ensure_running):
         c = controller.Controller()
         c._async_callbacks = False  # run callbacks synchronously in tests
         c.bot = MagicMock()
@@ -755,6 +756,37 @@ class InlineBoardTests(unittest.TestCase):
         c.bot.start.assert_called_once_with(flags)
         answer.assert_called_once_with("cb1")
         self.assertTrue(any(call.args[1].startswith("▶️ Started") for call in send_message.call_args_list))
+        # Board consumed: keyboard stripped, state dropped, message retired.
+        edit.assert_called_once_with(5, 9, {"inline_keyboard": []})
+        self.assertEqual(c.boards, {})
+        self.assertIn((5, 9), c._retired_board_messages)
+
+    def test_new_board_retires_previous_board(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c.boards[5] = {"message_id": 9, "flags": dict(controller.DEFAULT_FLAGS)}
+        with patch.object(controller, "send_message") as send_message, \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            send_message.return_value = {"ok": True, "result": {"message_id": 10}}
+            c.show_start_board(5, dict(controller.DEFAULT_FLAGS))
+
+        edit.assert_called_once_with(5, 9, {"inline_keyboard": []})
+        self.assertEqual(c.boards[5]["message_id"], 10)
+        self.assertIn((5, 9), c._retired_board_messages)
+
+    def test_late_tap_on_retired_board_is_ignored(self):
+        c = controller.Controller()
+        c._async_callbacks = False  # run callbacks synchronously in tests
+        c._retired_board_messages.add((5, 9))
+        c.boards[5] = {"message_id": 10, "flags": dict(controller.DEFAULT_FLAGS)}
+        with patch.object(controller, "TELEGRAM_ALLOWED_USER_IDS", {111}), \
+             patch.object(controller, "answer_callback_query"), \
+             patch.object(controller, "edit_message_reply_markup") as edit:
+            c._handle_callback(_callback("toggle:fs"))  # _callback's message_id
+
+        edit.assert_not_called()
+        self.assertEqual(c.boards[5]["flags"]["fs"], "n")
+        self.assertEqual(c.boards[5]["message_id"], 10)
 
     @patch.object(controller, "send_message")
     def test_menu_command_sends_command_buttons(self, send_message):
