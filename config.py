@@ -49,19 +49,17 @@ TELEGRAM_ALLOWED_USER_IDS = {
 # MAINMENU_2/3 ("League Results" header) and MAINMENU_4 ("Previous Rank
 # Results" header) are intentionally detected as MAINMENU per user decision —
 # those result screens are treated as the lobby in the current game patch.
-# MAINMENU_6 is the "League Results" title re-cropped from a real 1280x720
-# emulator frame; the user's original crops (2/3/4) score ~0.4 on real
-# frames — different source scale.
+# NOTE: these crops score ~0.4 on real 1280x720 emulator frames (different
+# source scale) so they effectively never match; working templates need
+# re-cropping from real frames of those screens (tracked in
+# tmp/checkpoint/bot-qol-improvements/state.md).
 STAGE_MAINMENU_TEMPLATE = [
     "MAINMENU_1.png",
     "MAINMENU_2.png",
     "MAINMENU_3.png",
     "MAINMENU_4.png",
-    "MAINMENU_6.png",
 ]
-# PURCHASE_ITEM_2 is the "Ready to Run?" title from the current patch's
-# purchase screen (real emulator frame); PURCHASE_ITEM_1 is the legacy layout.
-STAGE_PURCHASE_ITEM_TEMPLATE = ["PURCHASE_ITEM_1.png", "PURCHASE_ITEM_2.png"]
+STAGE_PURCHASE_ITEM_TEMPLATE = ["PURCHASE_ITEM_1.png"]
 STAGE_GAME_START_TEMPLATE = ["GAME_START_1.png"]
 STAGE_GAME_RELAY_TEMPLATE = ["GAME_RELAY_1.png"]
 STAGE_GAME_COMPLETE_TEMPLATE = ["GAME_COMPLETE_1.png"]
@@ -95,7 +93,7 @@ STAGE_GAME_SETTINGS_TEMPLATE = ["GAME_SETTINGS_1.png"]
 # League/Previous Rank Results header templates (MAINMENU_2-6) can match.
 # Top is y=10: the real "League Results" titles render at y=18-80.
 STAGE_MAINMENU_REGION = (154, 10, 832, 225)
-STAGE_PURCHASE_ITEM_REGION = (474, 25, 780, 140)  # covers legacy label + new "Ready to Run?" title
+STAGE_PURCHASE_ITEM_REGION = (474, 84, 602, 138)
 STAGE_GAME_START_REGION = (573, 265, 733, 427)
 STAGE_GAME_RELAY_REGION = (573, 265, 733, 427)
 STAGE_GAME_COMPLETE_REGION = (523, 27, 757, 116)
