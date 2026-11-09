@@ -59,6 +59,7 @@ from config import (
     SEND_LIFE_MAX_DURATION,
     SEND_LIFE_SENT_DIALOG_REGION,
     SEND_LIFE_SENT_DIALOG_TEMPLATE,
+    SPECIAL_PLAY_BUTTON,
     START_BUTTON,
     CONNECTION_LOST_RELOAD_BUTTON,
     FAILED_TO_RETRIEVE_DATA_CONFIRM_BUTTON,
@@ -73,6 +74,16 @@ from config import (
 def start_game():
     print("🏁 Starting the game...")
     safe_device_tap(DEVICE_IP, DEVICE_PORT, START_BUTTON[0], START_BUTTON[1])
+    time.sleep(random.uniform(0.8, 1.4))
+
+
+def start_special_episode():
+    # Special Episodes have no purchase/store page: the first PLAY opens the
+    # episode page, which has its own PLAY! at the same spot — tap it again.
+    print("🏴‍☠️ Starting Special Episode (PLAY twice)...")
+    safe_device_tap(DEVICE_IP, DEVICE_PORT, SPECIAL_PLAY_BUTTON[0], SPECIAL_PLAY_BUTTON[1])
+    time.sleep(random.uniform(1.2, 1.8))  # let the page transition finish
+    safe_device_tap(DEVICE_IP, DEVICE_PORT, SPECIAL_PLAY_BUTTON[0], SPECIAL_PLAY_BUTTON[1])
     time.sleep(random.uniform(0.8, 1.4))
 
 

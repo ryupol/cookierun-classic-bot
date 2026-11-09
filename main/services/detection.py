@@ -16,6 +16,7 @@ from config import (
     BOOST_TEMPLATES,
     MATCH_THRESHOLD,
     STAGE_REGIONS,
+    STAGE_TEMPLATE_SCALE,
     STAGE_TEMPLATES,
     TEMPLATE_DIR,
 )
@@ -114,6 +115,11 @@ def detect_stage(screen, stage_names=None, exclude=None):
         if not template_files:
             continue
         search_area = _crop_region(screen_gray, STAGE_REGIONS.get(stage_name))
+        scale = STAGE_TEMPLATE_SCALE.get(stage_name, 1.0)
+        if scale != 1.0:
+            # Template was cropped from a non-native-scale source (e.g. a
+            # phone screenshot): shrink the search area to its scale.
+            search_area = cv2.resize(search_area, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         for filename in template_files:
             template = _get_template_gray(filename)
             if template is None:
