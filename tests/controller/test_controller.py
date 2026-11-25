@@ -435,6 +435,30 @@ class CmdStopKillAppLifecycleTests(unittest.TestCase):
 class CmdPauseTests(unittest.TestCase):
     @patch("controller.app.device_force_stop_app")
     @patch.object(controller, "send_message")
+    def test_server_connection_failure_pauses_and_prompts_for_manual_action(self, send_message, force_stop):
+        c = controller.Controller()
+        c.bot.proc = MagicMock()
+        c.bot.proc.poll.return_value = 20
+        c.bot.proc.returncode = 20
+        c.last_known_alive = True
+        c.last_chat_id = 123
+
+        c._check_child_exit()
+        c._check_child_exit()
+
+        self.assertTrue(c.paused)
+        force_stop.assert_not_called()
+        send_message.assert_called_once()
+        self.assertEqual(send_message.call_args.args[0], 123)
+        self.assertIn("Manual action required", send_message.call_args.args[1])
+        self.assertIn("SDK Code 0", send_message.call_args.args[1])
+        self.assertEqual(
+            _button_labels(send_message.call_args.kwargs["reply_markup"]),
+            ["▶️ Continue (same settings)"],
+        )
+
+    @patch("controller.app.device_force_stop_app")
+    @patch.object(controller, "send_message")
     def test_pause_waits_for_exit_and_leaves_game_open(self, send_message, force_stop):
         c = controller.Controller()
         c._async_callbacks = False  # run callbacks synchronously in tests

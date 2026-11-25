@@ -55,13 +55,17 @@ from config import (
     DEVICE_PORT,
     SESSION_RESET_INTERVAL,
     LIVES_INTERVAL,
+    MAIN_MENU_START_RETRY_DELAY,
     MAX_FAILED_TO_RETRIEVE_DATA_RETRIES,
     MAX_GAME_COMPLETE_RETRIES,
+    MAX_MAIN_MENU_START_ATTEMPTS,
     MAX_UNKNOWN_STAGE_RESTARTS,
     UNKNOWN_STAGE_RESET_TIMEOUT,
 )
 from services.detection import detect_stage, load_templates
 from services.debug import save_debug_screen
+
+NO_CONNECTION_EXIT_CODE = 20
 
 # -------------------
 # BOT OPTIONS
@@ -174,6 +178,8 @@ def main():
         unknown_restart_count = 0
         data_retry_count = 0
         game_complete_retry_count = 0
+        main_menu_start_attempts = 0
+        main_menu_retry_at = 0.0
         first_detection = True
 
         while True:
@@ -222,6 +228,7 @@ def main():
                     last_stage = None
                     unknown_stage_since = None
                     is_first_game = True
+                    main_menu_start_attempts = 0
                     continue
             else:
                 unknown_stage_since = None
@@ -231,13 +238,37 @@ def main():
                 if stage != "GAME_COMPLETE":
                     game_complete_retry_count = 0
 
+            if stage == "MAINMENU" and main_menu_start_attempts:
+                if time.monotonic() < main_menu_retry_at:
+                    time.sleep(0.25)
+                    continue
+                if main_menu_start_attempts >= MAX_MAIN_MENU_START_ATTEMPTS:
+                    message = f"❌ CookieRun bot stopped: still on the main menu after {main_menu_start_attempts} Play attempts."
+                    print(message)
+                    save_debug_screen(device_screen)
+                    send_telegram_alert(message)
+                    break
+
+                main_menu_start_attempts += 1
+                print(f"⚠️ Main menu still visible. Retrying Play ({main_menu_start_attempts}/{MAX_MAIN_MENU_START_ATTEMPTS})...")
+                start_game()
+                main_menu_retry_at = time.monotonic() + MAIN_MENU_START_RETRY_DELAY
+                time.sleep(0.25)
+                continue
+            if stage is not None and stage != "MAINMENU":
+                main_menu_start_attempts = 0
+
             if stage == last_stage:
                 time.sleep(0.1)
                 continue
 
             last_stage = stage
 
-            if stage == "MAINMENU":
+            if stage == "NO_CONNECTION":
+                print("⏸️ PAUSED. CookieRun couldn't connect to the server (SDK Code 0). "
+                      "Manual action required. Check the connection and tap Confirm in the game.")
+                return NO_CONNECTION_EXIT_CODE
+            elif stage == "MAINMENU":
                 print("🎮 Detected Stage: MAINMENU")
                 # Wait screen refresh
                 print("⏳ Waiting 1 second for screen refresh...")
@@ -274,6 +305,8 @@ def main():
                     time.sleep(delay)
                 is_first_game = False
                 start_game()
+                main_menu_start_attempts = 1
+                main_menu_retry_at = time.monotonic() + MAIN_MENU_START_RETRY_DELAY
                 detection_group = "PRE_GAME"
             elif stage == "SPECIAL_MAINMENU":
                 print("🏴‍☠️ Detected Stage: SPECIAL_MAINMENU")
@@ -455,4 +488,4 @@ if __name__ == "__main__":
         _original_print(f"[{timestamp}]", *args, **kwargs)
 
     builtins.print = _print_with_datetime
-    main()
+    raise SystemExit(main())
