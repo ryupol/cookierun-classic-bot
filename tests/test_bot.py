@@ -2,6 +2,9 @@ import inspect
 import unittest
 from unittest.mock import MagicMock, patch
 
+import cv2
+import numpy as np
+
 import bot
 import config
 
@@ -36,6 +39,27 @@ class StartupDetectionTests(unittest.TestCase):
             detect.call_args_list[1].args[1],
             bot.get_detection_stage_names("PRE_GAME"),
         )
+
+
+class NoConnectionTests(unittest.TestCase):
+    def test_sdk_code_zero_stops_automation_on_a_grouped_scan(self):
+        blank = np.zeros((720, 1280, 3), dtype=np.uint8)
+        dialog = cv2.imread("templates/NO_CONNECTION_1.png")
+        height, width = dialog.shape[:2]
+        screen = blank.copy()
+        screen[265:265 + height, 377:377 + width] = dialog
+
+        with patch("bot.device_connect"), patch("bot.time.sleep"), \
+             patch("bot.prompt_user_options", return_value={"detect_relic": False}), \
+             patch("bot.device_capture_screen", side_effect=[blank, screen]) as capture, \
+             patch("bot.recover_friend_overlay", return_value=False), \
+             patch("bot.device_reset_app") as reset, \
+             patch("bot.device_tap") as tap:
+            self.assertEqual(bot.main(), bot.NO_CONNECTION_EXIT_CODE)
+
+        self.assertEqual(capture.call_count, 2)
+        reset.assert_not_called()
+        tap.assert_not_called()
 
 
 class OpeningJumpsOptionTests(unittest.TestCase):
@@ -104,6 +128,67 @@ class OpeningJumpsOptionTests(unittest.TestCase):
 
         self.assertTrue(options["use_fast_start"])
         self.assertFalse(options["use_opening_jumps"])
+
+
+class MainMenuStartTests(unittest.TestCase):
+    def run_main_menu(self, taps_to_open_purchase=None):
+        seconds = iter(range(21))
+        now = 0
+        tap_times = []
+        game_started = False
+
+        def capture_screen(*_):
+            nonlocal now
+            now = next(seconds, None)
+            if now is None or game_started:
+                raise KeyboardInterrupt
+            if len(tap_times) == taps_to_open_purchase:
+                return "PURCHASE_ITEM"
+            return "MAINMENU"
+
+        def play_game():
+            nonlocal game_started
+            game_started = True
+
+        options = {
+            "detect_relic": False,
+            "use_fast_start": False,
+            "use_cookie_relay": False,
+            "use_desired_random_boost": False,
+        }
+        with patch("bot.device_connect"), patch("bot.load_templates"), \
+             patch("bot.prompt_user_options", return_value=options), \
+             patch("bot.device_capture_screen", side_effect=capture_screen), \
+             patch("bot.detect_stage", side_effect=lambda screen, *args, **kwargs: screen), \
+             patch("bot.time.sleep"), patch("bot.time.monotonic", side_effect=lambda: now), \
+             patch("services.actions.safe_device_tap", side_effect=lambda *_: tap_times.append(now)), \
+             patch("bot.play_game", side_effect=play_game), \
+             patch("bot.save_debug_screen") as save_screen, patch("bot.send_telegram_alert") as alert:
+            bot.main()
+
+        return tap_times, game_started, save_screen.call_args, alert.call_args
+
+    def test_retries_play_after_the_first_tap_leaves_the_menu_open(self):
+        tap_times, game_started, _, alert = self.run_main_menu(taps_to_open_purchase=2)
+
+        self.assertEqual(tap_times, [0, 5])
+        self.assertTrue(game_started)
+        self.assertIsNone(alert)
+
+    def test_proceeds_without_retry_when_the_first_tap_opens_purchase(self):
+        tap_times, game_started, _, alert = self.run_main_menu(taps_to_open_purchase=1)
+
+        self.assertEqual(tap_times, [0])
+        self.assertTrue(game_started)
+        self.assertIsNone(alert)
+
+    def test_stops_and_reports_a_menu_that_stays_open(self):
+        tap_times, game_started, screenshot, alert = self.run_main_menu()
+
+        self.assertEqual(tap_times, [0, 5, 10])
+        self.assertFalse(game_started)
+        self.assertEqual(screenshot.args, ("MAINMENU",))
+        self.assertIn("main menu after 3 Play attempts", alert.args[0])
 
 
 class SessionResetLivesTests(unittest.TestCase):

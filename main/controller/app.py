@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 
+from bot import NO_CONNECTION_EXIT_CODE
 from services.adb import device_connect, device_ensure_app_running, device_force_stop_app
 from config import get_settings
 
@@ -508,17 +509,23 @@ class Controller:
         if proc is not None and (self.last_known_alive or self.pause_pending) and proc.poll() is not None:
             self.last_known_alive = False
             code = proc.returncode
-            if self.pause_pending:
+            if self.pause_pending or code == NO_CONNECTION_EXIT_CODE:
+                chat_id = self.pause_chat_id
+                message = "⏸️ PAUSED — bot taps stopped; CookieRun Classic is still open."
+                if code == NO_CONNECTION_EXIT_CODE:
+                    if chat_id is None:
+                        chat_id = self.last_chat_id
+                    message = (
+                        "⏸️ PAUSED. Manual action required. CookieRun couldn't connect to the server "
+                        "(SDK Code 0). Check the connection and tap Confirm in the game. "
+                        "Once the game reconnects, tap Continue here."
+                    )
                 self.pause_pending = False
                 self.paused = True
-                print(f"⏸️ Bot process paused (exit code {code}).")
-                if self.pause_chat_id is not None:
-                    self._send_resume_button(
-                        self.pause_chat_id,
-                        "⏸️ PAUSED — bot taps stopped; CookieRun Classic is still open.",
-                        paused=True,
-                    )
                 self.pause_chat_id = None
+                print(f"⏸️ Bot process paused (exit code {code}).")
+                if chat_id is not None:
+                    self._send_resume_button(chat_id, message, paused=True)
                 return
             print(f"🔴 Bot process exited (code {code}).")
             if self.last_chat_id is not None:
